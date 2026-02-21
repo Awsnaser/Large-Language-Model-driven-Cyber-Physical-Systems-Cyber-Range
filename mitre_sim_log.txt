@@ -1,0 +1,20 @@
+RED: DISRUPT GATEWAY 01 on gateway_01 -> RECON: gateway_01 intelligence gathered.
+BLUE: HARDEN_GATEWAY_01 on gateway_01 -> BLUE: Hardened gateway_01 using D3FEND: Platform Hardening
+RED: SCAN on gateway_01 -> RECON: gateway_01 intelligence gathered.
+BLUE: BLOCK on gateway_01 -> BLUE: Monitoring gateway_01 traffic.
+RED: SCAN on gateway_01 -> RECON: gateway_01 intelligence gathered.
+BLUE: HARDEN on gateway_01 -> BLUE: Hardened gateway_01 using D3FEND: Platform Hardening
+RED: SCAN on gateway_01 -> RECON: gateway_01 intelligence gathered.
+BLUE: SCAN on gateway_01 -> BLUE: Monitoring gateway_01 traffic.
+RED: SCAN on gateway_01 -> RECON: gateway_01 intelligence gathered.
+BLUE: SCAN on gateway_01 -> BLUE: Monitoring gateway_01 traffic.
+RED: SCAN on gateway_01 -> RECON: gateway_01 intelligence gathered.
+BLUE: HARDEN on gateway_01 -> BLUE: Hardened gateway_01 using D3FEND: Platform Hardening
+RED: SCAN on gateway_01 -> RECON: gateway_01 intelligence gathered.
+BLUE: SCAN on gateway_01 -> BLUE: Monitoring gateway_01 traffic.
+RED: SCAN on gateway_01 -> RECON: gateway_01 intelligence gathered.
+BLUE: SCAN on gateway_01 -> BLUE: Monitoring gateway_01 traffic.
+RED: SCAN on gateway_01 -> RECON: gateway_01 intelligence gathered.
+BLUE: SCAN on gateway_01 -> BLUE: Monitoring gateway_01 traffic.
+RED: SCAN on gateway_01 -> RECON: gateway_01 intelligence gathered.
+BLUE: SCAN on gateway_01 -> BLUE: Monitoring gateway_01 traffic.

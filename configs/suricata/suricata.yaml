@@ -1,0 +1,196 @@
+# Suricata Configuration for CPS Blue Team Defense
+%YAML 1.1
+
+# General Settings
+vars:
+  address-groups:
+    HOME_NET: "[192.168.0.0/16,10.0.0.0/8,172.16.0.0/12]"
+    EXTERNAL_NET: "!$HOME_NET"
+  
+  port-groups:
+    HTTP_PORTS: "80,81,8080,8081,8443"
+    HTTPS_PORTS: "443,8443"
+    MODBUS_PORTS: "502"
+    OPCUA_PORTS: "4840"
+    SSH_PORTS: "22,2222,2223,2224,2225,2226,2227,2228,2229"
+    FTP_PORTS: "21"
+    DNS_PORTS: "53"
+    SNMP_PORTS: "161"
+    DATABASE_PORTS: "3306,5432"
+
+# Interface Configuration
+af-packet:
+  - interface: any
+    cluster-id: 99
+    cluster-type: cluster_flow
+    defrag: yes
+    tpacket-v3: yes
+
+# Logging Configuration
+outputs:
+  - eve-log:
+      enabled: yes
+      type: file
+      filename: eve.json
+      types:
+        - alert:
+            payload: yes
+            payload-printable: yes
+            packet: yes
+            metadata: yes
+            http: yes
+            tls: yes
+            ssh: yes
+            smtp: yes
+            dnp3: yes
+            modbus: yes
+            enip: yes
+        - http:
+            extended: yes
+        - dns:
+            query: yes
+            answer: yes
+        - tls:
+            extended: yes
+        - files:
+            force-magic: yes
+            force-hash: [md5, sha1, sha256]
+        - flow
+        - stats:
+            totals: yes
+            threads: yes
+            deltas: yes
+
+  - alert-debug:
+      enabled: no
+      filename: alert-debug.log
+      type: file
+
+  - http-log:
+      enabled: yes
+      filename: http.log
+      append: yes
+      extended: yes
+
+  - tls-log:
+      enabled: yes
+      filename: tls.log
+      append: yes
+      extended: yes
+
+  - stats:
+      enabled: yes
+      filename: stats.log
+      append: yes
+      totals: yes
+      threads: no
+
+# Detection Engine
+detect:
+  profile: medium
+  custom-values:
+    toclient-chunk-size: 2560
+    toserver-chunk-size: 2560
+  sgh-mph-context-size: 32768
+  sgh-mpm-context-size: 32768
+  sgh-facility: 1000
+  sgh-mpm-algo: ac
+  prefilter:
+    default: yes
+  grouping:
+    default: yes
+    tcp-whitelist: 53, 80, 443, 143, 993, 995, 587, 465, 25, 110, 995, 143, 587, 465, 25, 110
+
+# Thresholding
+thresholding:
+  memcap: 2gb
+  detect:
+    rate:
+      filter: dst_net != $HOME_NET
+      track: by_src
+      count: 100
+      seconds: 10
+      action: threshold, limit
+      timeout: 3600
+
+# App-layer Protocols
+app-layer:
+  protocols:
+    modbus:
+      enabled: yes
+      detection-ports:
+        dp: 502
+    dnp3:
+      enabled: yes
+      detection-ports:
+        dp: 20000
+    enip:
+      enabled: yes
+      detection-ports:
+        dp: 44818
+    http:
+      enabled: yes
+      detection-ports:
+        dp: 80,81,8080,8081,8443
+    dns:
+      enabled: yes
+      detection-ports:
+        dp: 53
+    tls:
+      enabled: yes
+      detection-ports:
+        dp: 443,8443
+    ssh:
+      enabled: yes
+      detection-ports:
+        dp: 22,2222,2223,2224,2225,2226,2227,2228,2229
+    ftp:
+      enabled: yes
+      detection-ports:
+        dp: 21
+
+# Profiling
+profiling:
+  locks:
+    enabled: yes
+    filename: profile.locks.log
+  packets:
+    enabled: yes
+    filename: profile.packets.log
+
+# Rule Management
+default-rule-path: /var/lib/suricata/rules
+rule-files:
+  - suricata.rules
+  - modbus.rules
+  - dnp3.rules
+  - enip.rules
+  - custom-cps.rules
+
+# Custom CPS Rules
+rule-paths:
+  - /etc/suricata/rules
+
+# Performance Tuning
+threading:
+  set-cpu-affinity: yes
+  cpu-affinity:
+    - management-cpu-set:
+        cpu: [ 0 ]
+    - receive-cpu-set:
+        cpu: [ 1 ]
+    - worker-cpu-set:
+        cpu: [ "1-3" ]
+  detect-thread-ratio: 1.0
+
+# Memory Management
+max-pending-packets: 256000
+runmode: workers
+
+# File Extraction
+file-store:
+  enabled: yes
+  dir: /var/log/suricata/files
+  force-hash: [md5, sha1, sha256]
+  stream-depth: 0
+  max-file-size: 1mb

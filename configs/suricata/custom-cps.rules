@@ -1,0 +1,62 @@
+# Custom CPS Security Rules for Blue Team Defense
+# ================================================
+
+# Alert on suspicious Modbus traffic
+alert tcp any any -> $HOME_NET 502 (msg:"CPS Suspicious Modbus Traffic"; flow:established,to_server; content:"|FF FF|"; depth:2; threshold:type both, track by_src, count 10, seconds 30, threshold type limit, track by_src, count 5, seconds 60; classtype:attempted-recon; sid:1000001; rev:1;)
+
+# Alert on unauthorized OPC UA connections
+alert tcp any any -> $HOME_NET 4840 (msg:"CPS Unauthorized OPC UA Connection"; flow:established,to_server; threshold:type both, track by_src, count 5, seconds 60; classtype:attempted-recon; sid:1000002; rev:1;)
+
+# Alert on brute force attempts to SSH services
+alert tcp any any -> $HOME_NET $SSH_PORTS (msg:"CPS SSH Brute Force Attack"; flow:established,to_server; flags:S; threshold:type both, track by_src, count 10, seconds 60; classtype:attempted-admin; sid:1000003; rev:1;)
+
+# Alert on web application attacks to CPS interfaces
+alert tcp any any -> $HOME_NET $HTTP_PORTS (msg:"CPS Web Application Attack"; flow:to_server,established; content:"SELECT"; nocase; pcre:"/union.*select/i"; classtype:web-application-attack; sid:1000004; rev:1;)
+
+# Alert on suspicious FTP activity
+alert tcp any any -> $HONEYPOT_NET $FTP_PORTS (msg:"CPS Honeypot FTP Activity"; flow:established,to_server; content:"USER"; nocase; classtype:attempted-recon; sid:1000005; rev:1;)
+
+# Alert on DNS tunneling attempts
+alert udp any any -> $HOME_NET 53 (msg:"CPS DNS Tunneling Attempt"; content:"|01|"; depth:1; byte_test:1,>,50,0; classtype:attempted-recon; sid:1000006; rev:1;)
+
+# Alert on large data transfers from OT network
+alert tcp $OT_NET any -> $EXTERNAL_NET any (msg:"CPS Data Exfiltration from OT"; flow:established,to_server; threshold:type both, track by_dst, count 100, seconds 30; classtype:policy-violation; sid:1000007; rev:1;)
+
+# Alert on PLC programming changes
+alert tcp any any -> $HOME_NET $MODBUS_PORTS (msg:"CPS PLC Programming Change"; flow:established,to_server; content:"|0F|"; depth:1; classtype:policy-violation; sid:1000008; rev:1;)
+
+# Alert on unauthorized device discovery
+alert icmp any any -> $HOME_NET any (msg:"CPS Network Discovery"; itype:8; threshold:type both, track by_src, count 50, seconds 30; classtype:attempted-recon; sid:1000009; rev:1;)
+
+# Alert on honeypot access attempts
+alert tcp any any -> $HONEYPOT_NET any (msg:"CPS Honeypot Access Attempt"; flow:established,to_server; classtype:attempted-recon; sid:1000010; rev:1;)
+
+# Alert on suspicious HTTP user agents
+alert tcp any any -> $HOME_NET $HTTP_PORTS (msg:"CPS Suspicious User Agent"; flow:established,to_server; content:"User-Agent"; nocase; content:"sqlmap|nikto|nmap|masscan"; nocase; classtype:web-application-attack; sid:1000011; rev:1;)
+
+# Alert on TLS certificate anomalies
+alert tls any any -> $HOME_NET $HTTPS_PORTS (msg:"CPS TLS Certificate Anomaly"; tls.sni; content:"."; pcre:"/^[0-9\.]+$/"; classtype:policy-violation; sid:1000012; rev:1;)
+
+# Alert on Modbus function code anomalies
+alert tcp any any -> $HOME_NET 502 (msg:"CPS Modbus Anomaly"; flow:established,to_server; byte_test:1,>,127,6; classtype:attempted-dos; sid:1000013; rev:1;)
+
+# Alert on rapid connection attempts
+alert tcp any any -> $HOME_NET any (msg:"CPS Rapid Connection Attempts"; flags:S; threshold:type both, track by_src, count 100, seconds 10; classtype:attempted-dos; sid:1000014; rev:1;)
+
+# Alert on database connection attempts to honeypots
+alert tcp any any -> $HONEYPOT_NET $DATABASE_PORTS (msg:"CPS Honeypot Database Access"; flow:established,to_server; content:"SELECT"; nocase; classtype:attempted-recon; sid:1000015; rev:1;)
+
+# Alert on SNMP scanning
+alert udp any any -> $HOME_NET 161 (msg:"CPS SNMP Scanning"; content:"public"; nocase; threshold:type both, track by_src, count 20, seconds 30; classtype:attempted-recon; sid:1000016; rev:1;)
+
+# Alert on potential ransomware activity
+alert tcp any any -> $HOME_NET any (msg:"CPS Potential Ransomware Activity"; flow:established,to_server; content:"|FF FF FF FF|"; depth:4; classtype:attempted-dos; sid:1000017; rev:1;)
+
+# Alert on lateral movement indicators
+alert tcp $HOME_NET any -> $HOME_NET $SSH_PORTS (msg:"CPS Lateral Movement via SSH"; flow:established,to_server; threshold:type both, track by_src, count 5, seconds 60; classtype:policy-violation; sid:1000018; rev:1;)
+
+# Alert on SCADA protocol anomalies
+alert tcp any any -> $HOME_NET 44818 (msg:"CPS EtherNet/IP Anomaly"; flow:established,to_server; content:"|6F 00|"; depth:2; classtype:protocol-command-decode; sid:1000019; rev:1;)
+
+# Alert on honeypot credential stuffing
+alert tcp any any -> $HONEYPOT_NET $SSH_PORTS (msg:"CPS Honeypot Credential Stuffing"; flow:established,to_server; content:"root"; nocase; threshold:type both, track by_src, count 20, seconds 60; classtype:attempted-admin; sid:1000020; rev:1;)

@@ -1,0 +1,91 @@
+
+services:
+  gw_dmz_01:
+    container_name: gw_dmz_01
+    image: alpine:3.20
+    command:
+      [
+        "sh",
+        "-c",
+        "apk add --no-cache openssh busybox-extras && ssh-keygen -A && adduser -D -s /bin/sh trainee && echo 'trainee:trainee' | chpasswd && /usr/sbin/sshd -D -e"
+      ]
+    networks:
+      dmz_net:
+        aliases: ["gw_dmz_01"]
+    ports:
+      - "2222:22"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 22 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 8
+    read_only: true
+    tmpfs:
+      - /run
+      - /tmp
+    restart: unless-stopped
+  hist_data_01:
+    container_name: hist_data_01
+    image: nginx:alpine
+    networks:
+      dmz_net:
+        aliases: ["hist_data_01"]
+    ports:
+      - "8080:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:80 >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 8
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    restart: unless-stopped
+  hmi_ops_01:
+    container_name: hmi_ops_01
+    image: alpine:3.20
+    command: ["sh", "-c", "apk add --no-cache busybox-extras && sleep infinity"]
+    networks:
+      ot_net:
+        aliases: ["hmi_ops_01"]
+    healthcheck:
+      test: ["CMD-SHELL", "ps | grep -q sleep || exit 1"]
+      interval: 20s
+      timeout: 3s
+      retries: 5
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+  plc_industrial_01:
+    container_name: plc_industrial_01
+    image: alpine:3.20
+    command:
+      [
+        "sh",
+        "-c",
+        "apk add --no-cache busybox-extras && mkdir -p /plc && echo 'SAFE_v1' > /plc/logic_hash && sleep infinity"
+      ]
+    networks:
+      ot_net:
+        aliases: ["plc_industrial_01"]
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /plc/logic_hash || exit 1"]
+      interval: 20s
+      timeout: 3s
+      retries: 5
+    read_only: false
+    volumes:
+      - plc_state:/plc
+    restart: unless-stopped
+networks:
+  dmz_net:
+    driver: bridge
+    name: dmz_net
+  ot_net:
+    driver: bridge
+    name: ot_net
+volumes:
+  plc_state:

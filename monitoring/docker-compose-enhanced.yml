@@ -1,0 +1,247 @@
+version: '3.8'
+
+services:
+  # Existing services...
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana:/etc/grafana/provisioning
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+
+  # Enhanced Network Infrastructure
+  
+  # Open vSwitch for realistic switching
+  openswitch:
+    image: openswitch/openswitch:latest
+    privileged: true
+    hostname: ovs-switch
+    networks:
+      - cps_network
+    volumes:
+      - ./configs/ovs:/etc/openvswitch
+      - ovs_db:/var/lib/openvswitch
+    command: >
+      bash -c "
+      ovsdb-server --remote=punix:/var/run/openvswitch/db.sock &
+      ovs-vswitchd --pidfile=/var/run/openvswitch/ovs-vswitchd.pid &
+      sleep infinity
+      "
+
+  # SNMP Traffic Generator
+  snmp-simulator:
+    image: tandrup/snmpsim:latest
+    hostname: snmp-sim
+    networks:
+      - cps_network
+    ports:
+      - "161:161/udp"
+      - "162:162/udp"
+    environment:
+      - SNMP_COMMUNITY=public
+      - SNMP_COMMUNITY_RO=public
+      - SNMP_COMMUNITY_RW=private
+    volumes:
+      - ./monitoring/snmp_data:/data
+    command: >
+      sh -c "
+      snmpsimd --data-dir=/data --agent-udpv4-endpoint=0.0.0.0:161 \
+              --trap-udpv4-endpoint=0.0.0.0:162 --verbose
+      "
+
+  # Modbus TCP Server (Industrial Protocol)
+  modbus-server:
+    image: oitc/modbus-server:latest
+    hostname: modbus-server
+    networks:
+      - cps_network
+    ports:
+      - "502:502"
+    environment:
+      - MODBUS_DEBUG=true
+      - MODBUS_REGISTER_COUNT=100
+    volumes:
+      - ./monitoring/modbus_config:/config
+
+  # OPC UA Server (Industrial Communication)
+  opcua-server:
+    image: open62541/open62541:latest
+    hostname: opcua-server
+    networks:
+      - cps_network
+    ports:
+      - "4840:4840"
+    environment:
+      - SERVER_ENDPOINT=opc.tcp://0.0.0.0:4840
+      - SERVER_NAME=CPS_OPCUA_Server
+    volumes:
+      - ./monitoring/opcua_config:/config
+
+  # Network Traffic Generator
+  traffic-gen:
+    image: alpine:latest
+    hostname: traffic-gen
+    networks:
+      - cps_network
+    cap_add:
+      - NET_ADMIN
+    command: >
+      sh -c "
+      apk add --no-cache hping3 nmap tcpdump iperf3 netcat-openbsd
+      while true; do
+        # Generate web traffic
+        hping3 -S -p 80 -i u1 web-server 2>/dev/null &
+        hping3 -S -p 443 -i u1 web-server 2>/dev/null &
+        
+        # Generate industrial protocol traffic
+        nc -zv modbus-server 502 2>/dev/null &
+        nc -zv opcua-server 4840 2>/dev/null &
+        
+        # Generate network discovery traffic
+        nmap -sS -p 22,80,443,502,4840,161 gateway 2>/dev/null &
+        
+        # Generate bandwidth testing
+        iperf3 -c prometheus -t 5 2>/dev/null &
+        
+        sleep 60
+      done
+      "
+
+  # Syslog Server
+  syslog-server:
+    image: balabit/syslog-ng:latest
+    hostname: syslog-server
+    networks:
+      - cps_network
+    ports:
+      - "514:514/udp"
+      - "601:601/tcp"
+    volumes:
+      - syslog_logs:/var/log/syslog-ng
+      - ./monitoring/syslog.conf:/etc/syslog-ng/syslog-ng.conf
+
+  # NTP Server for Time Sync
+  ntp-server:
+    image: cturra/ntp:latest
+    hostname: ntp-server
+    networks:
+      - cps_network
+    ports:
+      - "123:123/udp"
+    environment:
+      - NTP_SERVERS=pool.ntp.org
+      - NTP_LOG_LEVEL=3
+
+  # DHCP Server
+  dhcp-server:
+    image: networkboot/dhcpd:latest
+    hostname: dhcp-server
+    networks:
+      - cps_network
+    ports:
+      - "67:67/udp"
+    volumes:
+      - ./monitoring/dhcpd.conf:/etc/dhcp/dhcpd.conf
+      - dhcp_leases:/var/lib/dhcp
+    command: >
+      sh -c "
+      ip addr add 192.168.100.1/24 dev eth0
+      dhcpd -4 -cf /etc/dhcp/dhcpd.conf eth0
+      "
+
+  # DNS Server
+  dns-server:
+    image: bind9:latest
+    hostname: dns-server
+    networks:
+      - cps_network
+    ports:
+      - "53:53/udp"
+      - "53:53/tcp"
+    volumes:
+      - ./monitoring/bind_config:/etc/bind
+      - dns_logs:/var/log/named
+
+  # Web Server (Target for traffic)
+  web-server:
+    image: nginx:alpine
+    hostname: web-server
+    networks:
+      - cps_network
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./monitoring/nginx.conf:/etc/nginx/nginx.conf
+      - web_logs:/var/log/nginx
+
+  # Database Server
+  database-server:
+    image: postgres:13
+    hostname: database-server
+    networks:
+      - cps_network
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=cps_data
+      - POSTGRES_USER=cps_user
+      - POSTGRES_PASSWORD=cps_pass
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - db_logs:/var/log/postgresql
+
+  # Packet Capture Service
+  packet-capture:
+    image: alpine:latest
+    hostname: packet-capture
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - ./pcaps:/pcaps
+    command: >
+      sh -c "
+      apk add --no-cache tcpdump
+      while true; do
+        tcpdump -i any -w /pcaps/capture_$(date +%Y%m%d_%H%M%S).pcap -C 100 -W 10 &
+        sleep 3600
+        killall tcpdump
+      done
+      "
+
+networks:
+  cps_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.100.0/24
+          gateway: 192.168.100.1
+
+volumes:
+  grafana_data:
+  prometheus_data:
+  ovs_db:
+  syslog_logs:
+  dhcp_leases:
+  dns_logs:
+  web_logs:
+  db_data:
+  db_logs:

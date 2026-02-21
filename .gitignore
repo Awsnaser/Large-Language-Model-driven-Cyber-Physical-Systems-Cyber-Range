@@ -1,0 +1,176 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Docker
+.dockerignore
+
+# Logs
+*.log
+logs/
+*.logs
+
+# Data and Exports
+*.csv
+*.json
+*.pcap
+*.png
+*.gif
+*.jpg
+*.jpeg
+outputs/
+exports/
+cyberrange_export/
+pcaps/
+
+# Models and Checkpoints
+*.pt
+*.pth
+*.h5
+*.pkl
+models/
+checkpoints/
+neural_models/
+
+# Temporary Files
+*.tmp
+*.temp
+.cache/
+tmp/
+
+# Monitoring Data
+prometheus_data/
+grafana_data/
+suricata_logs/
+honeypot_logs/
+plc_logs/
+opcua_logs/
+hmi_logs/
+web_logs/
+db_logs/
+dc_logs/
+ids_logs/
+siem_logs/
+
+# Docker Volumes
+*_data/
+*_logs/
+*_config/
+
+# Configuration with Secrets
+config/secrets.yaml
+.env.local
+.env.production
+
+# Test Coverage
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+
+# Documentation Build
+docs/_build/
+site/
+
+# Backup Files
+*.bak
+*.backup
+*~
+
+# Large Files
+*.zip
+*.tar.gz
+*.rar
+
+# Node.js (for topology viewer)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# React Build
+topology-viewer/build/
+topology-viewer/dist/
+
+# Benchmark Results
+benchmark_*.csv
+benchmark_*.json
+benchmark_out/
+
+# Simulation Results
+simulation_results/
+run_summary*
+*_publication_grid.png
+*_scenario_storyboard.png
+*_safety_vs_intervention.png
+*_residual_diagnostics.png
+*_killchain_*.png
+*_tool_usage.png
+
+# Infrastructure Maps
+infra_map*.png
+large_topo*.gif
+
+# Security Reports
+suricata_report.json
+security_reports/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary Docker Files
+docker-compose.override.yml
