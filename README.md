@@ -4,6 +4,19 @@ A comprehensive CPS cyber range simulation featuring Docker-based infrastructure
 
 > 🛡️ **Safety**: This project is simulation-only. No real exploit code is executed. All activities are contained within isolated Docker environments.
 
+# 🎥 Live Demo Video
+
+Watch a short recording of the interactive **Topology Viewer** in action:
+
+- Network zones (IT / DMZ / OT)  
+- Attack progression (red arrows) & defense responses (green arrows)  
+- Tank level gauge with physical impact visualization  
+- Round-by-round status, red/blue actions, compromised assets, and Gaussian Process risk estimates  
+
+<video src="https://github.com/user-attachments/assets/7bf5fd33-9861-44d3-9d29-77841ae2445d" controls width="800" height="450"></video>
+
+(If the video doesn't play inline, [direct link](https://github.com/user-attachments/assets/7bf5fd33-9861-44d3-9d29-77841ae2445d))
+
 ## 🚀 Key Features
 
 ### 🐳 **Advanced Docker Infrastructure**
