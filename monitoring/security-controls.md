@@ -1,150 +1,121 @@
-# 🔒 CPS Simulation Security Controls
+# CPS Range Security Controls — Version 2
 
-## Network Isolation
-- **Closed Environment**: All services run in isolated Docker networks
-- **No External Access**: Only localhost access to monitoring ports
-- **Network Segmentation**: IT, DMZ, and OT zones are properly separated
-- **Firewall Rules**: Block external connections to critical services
+## Safety model
 
-## Honeypot Security
-- **6 Honeypot Types**: Web, PLC, OPC UA, SSH, FTP, Database
-- **Vulnerable by Design**: Intentionally weak for attack simulation
-- **Activity Logging**: All honeypot interactions are captured
-- **Safe Isolation**: Honeypots cannot access production systems
+Version 2 is a **local research simulator**, not a guarantee of complete isolation. Keep it on a dedicated lab host, do not connect it to production networks or devices, and review the active Compose profile before starting it.
 
-## Data Protection
-- **Local Storage Only**: No data leaves the laptop
-- **Encrypted Volumes**: Sensitive data stored in encrypted Docker volumes
-- **Log Rotation**: Automatic cleanup of old logs and captures
-- **Privacy Compliant**: No personal or production data involved
+- Published ports bind to `127.0.0.1` by default.
+- The standard, closed, enhanced, laptop, and monitoring defaults use bridge networks.
+- Default services do not use host networking, privileged mode, `NET_ADMIN`, or `NET_RAW`.
+- The normal `suricata-ids` service performs configuration validation only (`suricata -T`); it does not capture packets.
+- Live packet capture is excluded unless the operator explicitly enables the `dangerous-packet-capture` profile.
+- Non-loopback Modbus access requires `--allow-external-modbus` and may read from and write to the target device.
 
-## Resource Management
-- **Memory Limits**: Each container has memory constraints
-- **CPU Limits**: Prevents system overload
-- **Graceful Shutdown**: Clean container termination
-- **Health Checks**: Automatic service monitoring
+## Access and credentials
 
-## Access Control
-- **Localhost Only**: Critical services only accessible from localhost
-- **Authentication**: Default credentials for research (changeable)
-- **No Remote Access**: SSH and management ports blocked externally
-- **Container Isolation**: Each service runs in isolated containers
+All published service ports are loopback-only. Set a unique Grafana password before sharing a host or captured output:
 
-## Monitoring Security
-- **Internal Monitoring**: Grafana/Prometheus only accessible locally
-- **Audit Logs**: All activities logged for analysis
-- **Packet Capture**: Network traffic captured for research
-- **IDS Integration**: Intrusion detection for honeypot activities
-
-## Laptop Safety Features
-- **Resource Optimization**: Lightweight configurations for laptop use
-- **Battery Friendly**: Minimal CPU usage when idle
-- **Thermal Management**: Prevents overheating
-- **Storage Management**: Automatic cleanup of large files
-
-## 🚀 Quick Start Commands
-
-### Start Lightweight Version (Recommended for Laptop)
 ```bash
-# Start optimized environment
-docker-compose -f monitoring/laptop-optimization.yml up -d
-
-# Check resource usage
-docker stats
-
-# Stop environment
-docker-compose -f monitoring/laptop-optimization.yml down
+export GRAFANA_ADMIN_PASSWORD='replace-with-a-strong-password'
 ```
 
-### Start Full Version (If Resources Available)
+The simulated SSH account is intentionally weak training data. Never reuse its credentials elsewhere.
+
+## Safe profiles
+
+### Standard four-service range
+
 ```bash
-# Start full environment
-docker-compose -f monitoring/docker-compose-closed.yml up -d
-
-# Monitor resources
-docker-compose -f monitoring/docker-compose-closed.yml top
-
-# Stop environment
-docker-compose -f monitoring/docker-compose-closed.yml down
+docker compose -f docker-compose.yml up -d
+docker compose -f docker-compose.yml down
 ```
 
-## 📊 Resource Requirements
+### Closed four-service range
 
-### Lightweight Version (Laptop)
-- **Memory**: ~2GB RAM
-- **CPU**: 2 cores
-- **Storage**: ~5GB
-- **Network**: Local only
-
-### Full Version (High-Performance)
-- **Memory**: ~8GB RAM
-- **CPU**: 4+ cores
-- **Storage**: ~20GB
-- **Network**: Local only
-
-## 🔍 Verification Commands
-
-### Check Network Isolation
 ```bash
-# Verify only localhost access
-curl -I http://localhost:3000  # Should work
-curl -I http://$(hostname):3000  # Should fail
-
-# Check network segmentation
-docker network ls
-docker network inspect monitoring_it_network
+docker compose -f monitoring/docker-compose-closed.yml up -d
+docker compose -f monitoring/docker-compose-closed.yml down
 ```
 
-### Check Honeypot Activity
-```bash
-# View honeypot logs
-docker logs cps-honeypot-web-lite
-docker logs cps-honeypot-plc-lite
+### Enhanced range with monitoring and offline IDS validation
 
-# Check packet captures
-ls -la pcaps/
-tcpdump -r pcaps/capture_*.pcap -nn
+```bash
+docker compose -f monitoring/docker-compose-enhanced.yml up -d
+docker compose -f monitoring/docker-compose-enhanced.yml ps
+docker compose -f monitoring/docker-compose-enhanced.yml down
 ```
 
-### Monitor Resource Usage
+### Laptop profile
+
 ```bash
-# Real-time resource monitoring
+docker compose -f monitoring/laptop-optimization.yml up -d
 docker stats --no-stream
-
-# System resource check
-htop
-df -h
+docker compose -f monitoring/laptop-optimization.yml down
 ```
 
-## 🛡️ Security Best Practices
+## Verification
 
-1. **Never expose ports externally** - keep everything localhost-only
-2. **Change default passwords** - update Grafana/admin credentials
-3. **Monitor resource usage** - ensure laptop doesn't overheat
-4. **Regular cleanup** - remove old logs and captures
-5. **Update containers** - keep Docker images updated
-6. **Network monitoring** - watch for unexpected traffic patterns
-
-## 🚨 Emergency Shutdown
+Confirm published ports are loopback-bound:
 
 ```bash
-# Immediate stop all containers
-docker-compose -f monitoring/laptop-optimization.yml down
-docker-compose -f monitoring/docker-compose-closed.yml down
-
-# Clean up all resources
-docker system prune -f
-docker volume prune -f
-
-# Kill any remaining processes
-sudo pkill -f docker
+docker compose -f monitoring/docker-compose-enhanced.yml ps
+docker port gw_dmz_01
+docker port hist_data_01
+docker port cps_grafana
+docker port cps_prometheus
 ```
 
-## 📝 Research Notes
+Inspect service logs:
 
-- This environment is **100% isolated** and safe for laptop use
-- All network traffic is **contained within Docker networks**
-- Honeypots are **designed to be attacked** safely
-- No **real production systems** are at risk
-- Perfect for **academic research** and **security training**
-- **Comprehensive logging** for analysis and learning
+```bash
+docker logs gw_dmz_01
+docker logs hist_data_01
+docker logs hmi_ops_01
+docker logs plc_industrial_01
+docker logs cps_suricata_ids
+```
+
+The one-shot IDS validator should exit successfully after checking the shipped configuration:
+
+```bash
+docker compose -f monitoring/docker-compose-enhanced.yml run --rm suricata-ids
+```
+
+## Explicit live-capture mode
+
+Only on a dedicated, isolated lab host, review the Compose file and then opt in explicitly:
+
+```bash
+docker compose -f monitoring/docker-compose-enhanced.yml \
+  --profile dangerous-packet-capture up -d suricata-live
+```
+
+This mode adds packet-capture capabilities and is not part of the safe default. Stop it with:
+
+```bash
+docker compose -f monitoring/docker-compose-enhanced.yml \
+  --profile dangerous-packet-capture down
+```
+
+## Emergency stop and cleanup
+
+Stop only this project's profiles first:
+
+```bash
+docker compose -f monitoring/docker-compose-enhanced.yml \
+  --profile dangerous-packet-capture down
+docker compose -f monitoring/laptop-optimization.yml down
+docker compose -f monitoring/docker-compose-closed.yml down
+docker compose -f docker-compose.yml down
+```
+
+Do not use system-wide prune or process-kill commands unless you understand their effect on unrelated Docker workloads.
+
+## Operating rules
+
+1. Use synthetic data only.
+2. Never target production systems.
+3. Keep external Modbus mode disabled unless the endpoint is an authorized lab device.
+4. Keep live capture disabled unless the host and network are deliberately isolated.
+5. Review container images and configuration changes before each run.
+6. Remove old logs, packet captures, and exported datasets according to your research data policy.

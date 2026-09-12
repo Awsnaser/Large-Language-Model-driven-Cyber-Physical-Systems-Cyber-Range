@@ -1,235 +1,91 @@
-# 🚀 Setup Guide
+# Setup — Version 2.0.0
 
-## Prerequisites
+## Requirements
 
-### System Requirements
-- **Docker Desktop** (latest version)
-- **Python 3.8+** 
-- **8GB+ RAM** for enhanced setup
-- **4GB+ RAM** for laptop setup
-- **10GB+ Disk Space**
+- Python 3.10+
+- `pip`
+- Docker Engine plus Compose v2 (`docker compose`) only for Docker/monitoring profiles
+- A local Ollama service and model only for non-scripted LLM runs
 
-### Required Python Packages
+Install the core runtime:
+
 ```bash
-pip install docker matplotlib numpy scipy scikit-learn faker prometheus-client
+python -m venv .venv
+source .venv/bin/activate             # Windows: .venv\Scripts\activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python cyberrange.py --version
 ```
 
-### Optional Neural Network Packages
+The Version 2 command is `python cyberrange.py`. The legacy command `python "python cyberrange_all_in_one.py"` remains a wrapper for compatibility.
+
+## First run
+
+Start with an Ollama-free simulator-only run:
+
 ```bash
-pip install torch torchvision transformers ray[rllib] pettingzoo
+python cyberrange.py --no-docker-up --scripted-agents --rounds 10
 ```
 
-## Quick Installation
+`--no-docker-up` prevents Compose startup. The simulator may still try Docker metadata lookup; unavailable Docker falls back to placeholder IPs.
 
-### 1. Clone Repository
+For the default Docker range:
+
 ```bash
-git clone <your-repo-url>
-cd advanced-cyber-range-simulator
+docker compose version
+docker info
+python cyberrange.py --scripted-agents --rounds 20
 ```
 
-### 2. Install Dependencies
+## Compose choices
+
+Validate a Compose file before starting it:
+
 ```bash
-# Basic dependencies
-pip install -r requirements.txt
-
-# Neural network dependencies (optional)
-pip install -r requirements-neural.txt
-
-# Run installation script
-chmod +x install-neural-system.sh
-./install-neural-system.sh
+docker compose -f docker-compose.yml config -q
 ```
 
-### 3. Docker Setup
+| Choice | Run command | Description |
+| --- | --- | --- |
+| Standard | `python cyberrange.py --rounds 20` | Four modeled CPS services from `docker-compose.yml`. |
+| Enhanced monitored range | `python cyberrange.py --enhanced-docker --rounds 20` | Uses `monitoring/docker-compose-enhanced.yml` with four modeled CPS assets, monitoring, and offline IDS validation. |
+| Laptop | `python cyberrange.py --laptop-docker --rounds 20` | Resource-limited safe range plus monitoring and Suricata configuration validation. |
+| Safe enhanced | `python cyberrange.py --compose monitoring/docker-compose-enhanced.yml --rounds 20` | Range, monitoring, and Suricata configuration validation. |
+
+Normal Compose services do not use host networking, privileged mode, or packet-capture capabilities. Their published management ports bind to `127.0.0.1`; that does not establish complete host isolation.
+
+## Optional components
+
+### LLM-controlled agents
+
+The default (non-scripted) run calls Ollama. Ensure the service is running and the selected models are installed before omitting `--scripted-agents`:
+
 ```bash
-# Start Docker Desktop
-docker --version
-docker-compose --version
+python cyberrange.py --rounds 20 --model-red llama3.2:1b --model-blue llama3.2:1b
 ```
 
-## Configuration Options
+### Neural agents
 
-### Environment Variables
 ```bash
-export PYTHONPATH="${PYTHONPATH}:$(pwd)"
-export CUDA_VISIBLE_DEVICES=0  # For GPU acceleration
+python -m pip install -r requirements-neural.txt
+python cyberrange.py --no-docker-up --multi-agent \
+  --neural-arch deep_feedforward --rounds 20
 ```
 
-### Docker Compose Files
-- **Standard**: `docker-compose.yml` (4 containers)
-- **Enhanced**: `monitoring/docker-compose-closed.yml` (26 containers)
-- **Laptop**: `monitoring/laptop-optimization.yml` (16 containers)
+The Version 2 runner supports `deep_feedforward` and `deep`. It does not expose transformer, GNN, or memory choices as integrated runner architectures, and rejects `--neuroevolution`.
 
-## Running the Simulation
+### Monitoring
 
-### Basic Simulation
 ```bash
-python "python cyberrange_all_in_one.py" --scripted-agents --rounds 20
+export GRAFANA_ADMIN_PASSWORD='use-a-unique-local-password'
+python cyberrange.py --metrics --monitoring-up --scripted-agents --rounds 20
 ```
 
-### Enhanced Infrastructure
-```bash
-python "python cyberrange_all_in_one.py" --enhanced-docker --scripted-agents --rounds 20
-```
+Grafana is configured with the `admin` user and the supplied password. Do not use or document an `admin/admin` default. Review the host-side Python metrics listener separately from Compose port mappings.
 
-### Neural Multi-Agent System
-```bash
-python "python cyberrange_all_in_one.py" \
-  --enhanced-docker \
-  --multi-agent \
-  --num-attackers 4 \
-  --num-defenders 4 \
-  --num-analysts 2 \
-  --neural-arch transformer \
-  --agent-coordination \
-  --scripted-agents \
-  --rounds 50
-```
+### Modbus and PCAP options
 
-### Suricata Monitoring
-```bash
-# Start monitoring dashboard
-python suricata-monitor.py
+- Install `pymodbus` before `--real-modbus`. This mode reads from and writes to the selected endpoint; a non-loopback target also requires `--allow-external-modbus` and should be a reviewed lab/simulator device.
+- Install `scapy` before `--pcap PATH`. This exports simulated traffic and does not start live capture.
 
-# Check Suricata status
-docker ps --filter name=suricata
-```
-
-## Troubleshooting
-
-### Common Issues
-
-#### Docker Container Conflicts
-```bash
-# Clean up existing containers
-docker-compose -f monitoring/docker-compose-closed.yml down --remove-orphans
-docker system prune -f
-```
-
-#### Missing Dependencies
-```bash
-# Install missing packages
-pip install docker matplotlib numpy scipy scikit-learn faker
-
-# For neural networks
-pip install torch torchvision
-```
-
-#### Permission Issues
-```bash
-# Docker permissions (Linux/Mac)
-sudo usermod -aG docker $USER
-
-# Restart Docker service
-sudo systemctl restart docker
-```
-
-#### Port Conflicts
-```bash
-# Check port usage
-netstat -tulpn | grep :3000
-netstat -tulpn | grep :9090
-
-# Kill conflicting processes
-sudo kill -9 <PID>
-```
-
-### Performance Optimization
-
-#### For Enhanced Setup (26 containers)
-- **RAM**: 8GB+ recommended
-- **CPU**: 4+ cores recommended
-- **Disk**: 10GB+ free space
-
-#### For Laptop Setup (16 containers)
-- **RAM**: 4GB+ recommended  
-- **CPU**: 2+ cores recommended
-- **Disk**: 5GB+ free space
-
-#### GPU Acceleration (Neural Networks)
-```bash
-# Check CUDA availability
-python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
-
-# Install CUDA PyTorch (if available)
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
-```
-
-## Verification
-
-### Test Basic Setup
-```bash
-python test-enhanced-docker.py
-```
-
-### Test Neural Integration
-```bash
-python test-neural-system.py
-```
-
-### Test Suricata Integration
-```bash
-python test-suricata.py
-```
-
-## Configuration Files
-
-### Main Configuration
-- **`python cyberrange_all_in_one.py`**: Main simulation script
-- **`configs/suricata/suricata.yaml`**: Suricata IDS configuration
-- **`configs/suricata/custom-cps.rules`**: CPS-specific security rules
-
-### Docker Configuration
-- **`docker-compose.yml`**: Standard container setup
-- **`monitoring/docker-compose-closed.yml`**: Enhanced setup with honeypots
-- **`monitoring/laptop-optimization.yml`**: Lightweight laptop setup
-
-### Neural Network Configuration
-- **`multi_agent_system.py`**: Multi-agent architecture
-- **`neural_agent_integration.py`**: Neural integration layer
-- **`advanced_neural_architectures.py`**: Advanced neural models
-
-## Monitoring and Logs
-
-### Container Logs
-```bash
-# View all container logs
-docker-compose logs
-
-# View specific container logs
-docker logs cps-suricata-ids
-docker logs cps-plc-01
-```
-
-### System Monitoring
-- **Grafana**: http://localhost:3000
-- **Prometheus**: http://localhost:9090
-- **Suricata Dashboard**: Run `python suricata-monitor.py`
-
-### Export Data
-```bash
-# Export simulation data
-python "python cyberrange_all_in_one.py" --export-dataset outputs/data
-
-# Export PCAP files
-python "python cyberrange_all_in_one.py" --pcap outputs/capture.pcap
-```
-
-## Support
-
-### Documentation
-- **`README.md`**: Complete project overview
-- **`SURICATA_INTEGRATION.md`**: Suricata IDS documentation
-- **`NEURAL_SYSTEM_USAGE.md`**: Neural network usage guide
-
-### Issues and Help
-1. Check Docker Desktop is running
-2. Verify all dependencies are installed
-3. Check system resources (RAM/CPU)
-4. Review container logs for errors
-5. Run verification tests
-
-### Community
-- **Issues**: Report bugs via GitHub Issues
-- **Discussions**: Use GitHub Discussions for questions
-- **Contributions**: Pull requests welcome
+See [SURICATA_INTEGRATION.md](SURICATA_INTEGRATION.md) for the IDS profiles and [VERSION_2.md](VERSION_2.md) for the upgrade checklist.

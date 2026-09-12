@@ -8,7 +8,7 @@ import json
 import time
 import subprocess
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Any
 import threading
 
@@ -128,15 +128,17 @@ class SuricataMonitor:
               
     def get_recent_alerts(self, minutes: int = 5) -> List[Dict[str, Any]]:
         """Get alerts from last N minutes"""
-        cutoff_time = datetime.now() - timedelta(minutes=minutes)
+        cutoff_time = datetime.now(timezone.utc) - timedelta(minutes=minutes)
         recent = []
         
         for alert in self.alerts:
             try:
-                alert_time = datetime.fromisoformat(alert["timestamp"].replace('Z', '+00:00'))
-                if alert_time >= cutoff_time:
+                alert_time = datetime.fromisoformat(alert["timestamp"].replace("Z", "+00:00"))
+                if alert_time.tzinfo is None:
+                    alert_time = alert_time.replace(tzinfo=timezone.utc)
+                if alert_time.astimezone(timezone.utc) >= cutoff_time:
                     recent.append(alert)
-            except:
+            except (KeyError, TypeError, ValueError):
                 continue
                 
         return recent
@@ -263,7 +265,7 @@ def check_suricata_status():
     """Check if Suricata is running"""
     try:
         result = subprocess.run(
-            ["docker", "ps", "--filter", "name=cps-suricata-ids", "--format", "{{.Status}}"],
+            ["docker", "ps", "--filter", "name=cps_suricata_live", "--format", "{{.Status}}"],
             capture_output=True, text=True, timeout=10
         )
         
@@ -288,19 +290,12 @@ def main():
     print("🛡️  Suricata Blue Team Defender for CPS")
     print("=" * 50)
     
-    # Check if Suricata is running
+    # Live capture is intentionally never auto-started. It requires an explicit
+    # opt-in profile and should only run on an isolated lab host.
     if not check_suricata_status():
-        print("\n🚀 Starting Suricata container...")
-        try:
-            subprocess.run([
-                "docker-compose", "-f", "monitoring/docker-compose-closed.yml", 
-                "up", "-d", "suricata-ids"
-            ], check=True)
-            print("✅ Suricata container started")
-            time.sleep(5)  # Give it time to initialize
-        except Exception as e:
-            print(f"❌ Failed to start Suricata: {e}")
-            return
+        print("\nLive capture is not running. Start it explicitly on an isolated lab host:")
+        print("  docker compose -f monitoring/docker-compose-enhanced.yml --profile dangerous-packet-capture up -d suricata-live")
+        return
     
     # Start monitoring
     monitor = SuricataMonitor()

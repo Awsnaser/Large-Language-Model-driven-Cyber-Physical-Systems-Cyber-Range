@@ -1,3 +1,5 @@
+export type Criticality = 'HIGH' | 'MEDIUM' | 'LOW';
+
 export interface SubnetInfo {
   name: string;
   zone: string;
@@ -11,8 +13,9 @@ export interface AssetInfo {
   zone: string;
   kind: string;
   ip: string;
+  /** Exporters may call this field `network`; it is normalized to subnet on load. */
   subnet: string;
-  criticality: string;
+  criticality: Criticality;
   compromised: boolean;
   privilege: string;
   services: string[];

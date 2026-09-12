@@ -1,0 +1,7 @@
+# Keep the viewer's reproducible build metadata despite the repository-wide *.json rule.
+!package.json
+!package-lock.json
+!tsconfig.json
+
+node_modules/
+dist/

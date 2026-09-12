@@ -1,335 +1,83 @@
-# 🤝 Contributing to Advanced Cyber-Physical Range Simulator
+# Contributing — Version 2.0.0
 
-We welcome contributions to the Advanced Cyber-Physical Range Simulator! This document provides guidelines for contributing to the project.
+Contributions are welcome. Keep changes focused, testable, and consistent with the Version 2 safety model.
 
-## 🎯 Project Overview
+## Development setup
 
-This is a comprehensive CPS cyber range simulation featuring:
-- Docker-based infrastructure with honeypots
-- Multi-agent neural network systems
-- Suricata IDS integration
-- Real-time security monitoring
-- Advanced visualization tools
-
-## 🚀 Getting Started
-
-### Prerequisites
-- Python 3.8+
-- Docker Desktop
-- Git
-
-### Setup Development Environment
 ```bash
-# Clone the repository
-git clone <your-repo-url>
-cd advanced-cyber-range-simulator
-
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
-pip install -r requirements-neural.txt
-
-# Install development tools
-pip install pytest black flake8 mypy
+git clone <repository-url>
+cd llm-cps-cyber-range
+python -m venv .venv
+source .venv/bin/activate             # Windows: .venv\Scripts\activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt
 ```
 
-## 📋 How to Contribute
+Install optional neural dependencies only when working on that subsystem:
 
-### 1. Fork and Clone
-- Fork the repository on GitHub
-- Clone your fork locally
-- Create a feature branch
-
-### 2. Development Guidelines
-- Follow PEP 8 style guidelines
-- Write clear, documented code
-- Add tests for new features
-- Update documentation
-
-### 3. Submit Changes
-- Push to your fork
-- Create a pull request
-- Describe your changes clearly
-- Include tests and documentation
-
-## 🏗️ Project Structure
-
-```
-advanced-cyber-range-simulator/
-├── python cyberrange_all_in_one.py    # Main simulation script
-├── multi_agent_system.py              # Multi-agent architecture
-├── neural_agent_integration.py        # Neural integration layer
-├── advanced_neural_architectures.py   # Advanced neural models
-├── suricata-monitor.py                # Suricata monitoring dashboard
-├── configs/                           # Configuration files
-│   └── suricata/                      # Suricata IDS configs
-├── monitoring/                        # Docker compose files
-│   ├── docker-compose-closed.yml     # Enhanced setup
-│   └── laptop-optimization.yml       # Laptop setup
-├── topology-viewer/                   # React visualization
-├── tests/                            # Test files
-├── benchmark/                        # Benchmark configurations
-└── docs/                             # Documentation
-```
-
-## 🔧 Development Areas
-
-### 1. Neural Network Enhancements
-- New neural architectures
-- Improved agent coordination
-- Advanced learning algorithms
-- Performance optimization
-
-### 2. Security Features
-- Additional IDS rules
-- New honeypot types
-- Enhanced monitoring
-- Threat intelligence integration
-
-### 3. Infrastructure
-- New container types
-- Network configurations
-- Performance optimizations
-- Cloud deployment options
-
-### 4. Visualization
-- Enhanced topology viewer
-- Real-time dashboards
-- 3D visualizations
-- Mobile interfaces
-
-### 5. Simulation Logic
-- New attack patterns
-- Defense strategies
-- Physics models
-- Benchmark scenarios
-
-## 🧪 Testing
-
-### Running Tests
 ```bash
-# Run all tests
-pytest
-
-# Run specific test file
-pytest tests/test_neural_system.py
-
-# Run with coverage
-pytest --cov=. tests/
+python -m pip install -r requirements-neural.txt
 ```
 
-### Test Categories
-- **Unit Tests**: Individual components
-- **Integration Tests**: Component interactions
-- **System Tests**: Full simulation
-- **Performance Tests**: Resource usage
+Use the canonical CLI in examples and tests:
 
-### Writing Tests
-- Use pytest framework
-- Test both success and failure cases
-- Mock external dependencies
-- Include edge cases
-
-## 📝 Code Style
-
-### Python Guidelines
-- Follow PEP 8
-- Use type hints
-- Document functions and classes
-- Keep functions focused
-
-### Example Code Style
-```python
-def calculate_risk_score(
-    threat_level: float, 
-    vulnerability_score: float, 
-    asset_value: float
-) -> float:
-    """Calculate comprehensive risk score.
-    
-    Args:
-        threat_level: Current threat level (0.0-1.0)
-        vulnerability_score: Vulnerability assessment (0.0-1.0)
-        asset_value: Asset criticality (0.0-1.0)
-        
-    Returns:
-        Risk score (0.0-1.0)
-    """
-    return (threat_level * vulnerability_score * asset_value) ** 0.5
+```bash
+python cyberrange.py --no-docker-up --scripted-agents --rounds 10
+python cyberrange.py --version
+pytest -q
 ```
 
-## 🐛 Bug Reports
+The historical `python cyberrange_all_in_one.py` command is a supported compatibility wrapper, not the target for new documentation or entry-point work.
 
-### Reporting Bugs
-1. Check existing issues
-2. Create detailed bug report
-3. Include reproduction steps
-4. Add system information
-5. Provide logs if available
+## Change guidelines
 
-### Bug Report Template
-```markdown
-## Bug Description
-Brief description of the issue
+1. Create a focused branch and explain the user-facing effect in the pull request.
+2. Add or update tests for behavior changes. Run `pytest -q` before submission.
+3. Keep the core simulator usable with only `requirements.txt`. Guard Torch-dependent work as optional.
+4. Keep CLI documentation accurate: Version 2 accepts only `deep_feedforward` and `deep` for `--neural-arch`; do not present unsupported architectures or `--neuroevolution` as working runner options.
+5. Update root documentation when commands, profiles, requirements, or safety behavior changes.
+6. Do not silently turn symbolic/simulated behavior into real-world activity.
 
-## Steps to Reproduce
-1. Run command: `python "python cyberrange_all_in_one.py" --enhanced-docker`
-2. Observe error
-3. Expected behavior vs actual
+## Safety-sensitive changes
 
-## System Information
-- OS: Windows 10
-- Python: 3.9.0
-- Docker: 20.10.0
-- RAM: 16GB
+The normal Compose service set is safe by default: no host networking, privileged containers, or packet-capture capabilities, and Compose-published management ports bind to loopback. Preserve these defaults.
 
-## Logs
-```
-[ERROR] Container failed to start...
-```
+- The regular `suricata-ids` service is a one-shot `-T` configuration-validation job, not a live IDS service.
+- Live capture belongs only in the explicit `dangerous-packet-capture` profile in `monitoring/docker-compose-enhanced.yml`. Changes to it require clear documentation of traffic scope, requested capabilities, and isolated-lab use.
+- `--real-modbus` can read/write an endpoint. Preserve the non-loopback acknowledgement guard and test it when touching that path.
+- Do not claim complete isolation, automatic packet capture, host-wide monitoring, or unsupported credentials.
+
+When changing a Compose file, validate it and check the relevant services:
+
+```bash
+docker compose -f <compose-file> config -q
+docker compose -f monitoring/docker-compose-enhanced.yml up -d
+docker compose -f monitoring/docker-compose-enhanced.yml ps
 ```
 
-## 💡 Feature Requests
+A successfully exited `suricata-ids` job validates configuration syntax only. It does not demonstrate capture or detection.
 
-### Proposing Features
-1. Check existing issues and discussions
-2. Create detailed feature request
-3. Explain use case and benefits
-4. Consider implementation approach
-5. Include mockups if applicable
+## Tests and quality checks
 
-### Feature Request Template
-```markdown
-## Feature Description
-Clear description of proposed feature
+```bash
+pytest -q
 
-## Use Case
-Why this feature is needed
-Who would benefit
-Current limitations
-
-## Proposed Solution
-How to implement
-Technical considerations
-Potential challenges
-
-## Alternatives
-Other approaches considered
-Pros and cons
+# Optional topology viewer checks
+cd topology-viewer
+npm install
+npm run typecheck
+npm test
+npm run build
 ```
 
-## 📖 Documentation
+For Docker-dependent validation, also confirm a running engine with `docker info`. Avoid committing generated exports, logs, local environments, node modules, or credentials.
 
-### Documentation Types
-- **API Documentation**: Code references
-- **User Guides**: How-to instructions
-- **Architecture Docs**: System design
-- **Tutorials**: Step-by-step guides
+## Pull request checklist
 
-### Writing Documentation
-- Use clear, concise language
-- Include code examples
-- Add screenshots/diagrams
-- Keep documentation up-to-date
-
-## 🔄 Release Process
-
-### Version Management
-- Use semantic versioning (MAJOR.MINOR.PATCH)
-- Update CHANGELOG.md
-- Tag releases in Git
-- Create GitHub releases
-
-### Release Checklist
-- [ ] All tests pass
-- [ ] Documentation updated
-- [ ] CHANGELOG updated
-- [ ] Version bumped
-- [ ] Release tagged
-- [ ] GitHub release created
-
-## 🏆 Recognition
-
-### Contributor Recognition
-- Contributors listed in README
-- Special thanks in releases
-- Featured in project showcase
-- Invitation to core team (for significant contributions)
-
-### Types of Contributions
-- **Code**: New features, bug fixes
-- **Documentation**: Guides, tutorials
-- **Testing**: Test cases, bug reports
-- **Design**: UI/UX, graphics
-- **Community**: Support, discussions
-
-## 📞 Getting Help
-
-### Communication Channels
-- **GitHub Issues**: Bug reports, feature requests
-- **GitHub Discussions**: Questions, ideas
-- **Code Reviews**: Feedback on contributions
-
-### Community Guidelines
-- Be respectful and inclusive
-- Provide constructive feedback
-- Help others learn and grow
-- Follow the code of conduct
-
-## 🎯 Development Priorities
-
-### High Priority
-- Bug fixes and stability
-- Performance improvements
-- Security enhancements
-- Documentation updates
-
-### Medium Priority
-- New neural architectures
-- Additional container types
-- Enhanced visualizations
-- Benchmark scenarios
-
-### Low Priority
-- Experimental features
-- Minor UI improvements
-- Nice-to-have enhancements
-
-## 📋 Review Process
-
-### Pull Request Review
-1. Automated checks (tests, linting)
-2. Code review by maintainers
-3. Documentation review
-4. Integration testing
-5. Approval and merge
-
-### Review Criteria
-- Code quality and style
-- Test coverage
-- Documentation
-- Performance impact
-- Security considerations
-
-## 🌟 Recognition Program
-
-### Contributor Levels
-- **Contributor**: 1+ merged PRs
-- **Active Contributor**: 5+ merged PRs
-- **Core Contributor**: 10+ merged PRs
-- **Maintainer**: Significant ongoing contributions
-
-### Benefits
-- GitHub organization membership
-- Release management access
-- Project direction input
-- Special recognition in releases
-
----
-
-Thank you for contributing to the Advanced Cyber-Physical Range Simulator! 🎉
-
-Every contribution helps make this project better for the cybersecurity research community.
+- [ ] Change is scoped and documented.
+- [ ] `pytest -q` passes (or skipped optional-neural tests are explained).
+- [ ] Relevant Compose file passes `docker compose -f <file> config -q`.
+- [ ] Normal profiles remain safe by default.
+- [ ] Any live-capture or Modbus behavior has explicit opt-in, reviewable documentation.
+- [ ] CLI examples use `python cyberrange.py`.

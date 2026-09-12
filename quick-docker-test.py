@@ -1,100 +1,57 @@
 #!/usr/bin/env python3
-"""
-Quick test for enhanced docker configuration
-"""
+"""Quick, Docker-free inventory check for CPS Cyber Range Version 2."""
 
+from __future__ import annotations
+
+import importlib.util
 import sys
-import os
+from pathlib import Path
 
-def test_container_configurations():
-    """Test container configurations without Docker"""
-    
-    print("Testing Enhanced Docker Container Configurations")
-    print("=" * 50)
-    
-    # Import the main module to test configurations
-    sys.path.append('.')
-    
+
+def load_range_module():
+    module_path = Path(__file__).with_name("cyberrange.py")
+    spec = importlib.util.spec_from_file_location("cyberrange_v2", module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def main() -> int:
     try:
-        # Import container names
-        from python_cyberrange_all_in_one import (
-            STANDARD_CONTAINERS, ENHANCED_CONTAINERS, LAPTOP_CONTAINERS,
-            PLACEHOLDER_IPS, ASSET_PORTS
-        )
-        
-        print(f"✅ Standard containers: {len(STANDARD_CONTAINERS)}")
-        for container in STANDARD_CONTAINERS:
-            print(f"   - {container}")
-        
-        print(f"\n✅ Enhanced containers: {len(ENHANCED_CONTAINERS)}")
-        for container in ENHANCED_CONTAINERS:
-            ip = PLACEHOLDER_IPS.get(container, "N/A")
-            ports = ASSET_PORTS.get(container, {})
-            print(f"   - {container} ({ip}) - {list(ports.keys())}")
-        
-        print(f"\n✅ Laptop containers: {len(LAPTOP_CONTAINERS)}")
-        for container in LAPTOP_CONTAINERS:
-            ip = PLACEHOLDER_IPS.get(container, "N/A")
-            ports = ASSET_PORTS.get(container, {})
-            print(f"   - {container} ({ip}) - {list(ports.keys())}")
-        
-        # Test docker-compose files exist
-        print(f"\n📁 Checking Docker Compose Files:")
-        
-        files_to_check = [
-            "docker-compose.yml",
-            "monitoring/docker-compose-closed.yml", 
-            "monitoring/laptop-optimization.yml"
-        ]
-        
-        for file_path in files_to_check:
-            if os.path.exists(file_path):
-                print(f"   ✅ {file_path}")
-            else:
-                print(f"   ❌ {file_path}")
-        
-        print(f"\n🎯 Configuration Summary:")
-        print(f"   - Standard setup: {len(STANDARD_CONTAINERS)} containers")
-        print(f"   - Enhanced setup: {len(ENHANCED_CONTAINERS)} containers")
-        print(f"   - Laptop setup: {len(LAPTOP_CONTAINERS)} containers")
-        print(f"   - Total IPs configured: {len(PLACEHOLDER_IPS)}")
-        print(f"   - Total port configurations: {len(ASSET_PORTS)}")
-        
-        return True
-        
-    except ImportError as e:
-        print(f"❌ Import failed: {e}")
-        return False
-    except Exception as e:
-        print(f"❌ Test failed: {e}")
-        return False
+        module = load_range_module()
+        expected = ("gw_dmz_01", "hist_data_01", "hmi_ops_01", "plc_industrial_01")
+        inventories = {
+            "standard": tuple(module.STANDARD_CONTAINERS),
+            "enhanced simulator": tuple(module.ENHANCED_CONTAINERS),
+            "laptop simulator": tuple(module.LAPTOP_CONTAINERS),
+        }
+        failures = [name for name, inventory in inventories.items() if inventory != expected]
 
-def show_usage_commands():
-    """Show usage commands"""
-    
-    print(f"\n🚀 Usage Commands:")
-    print(f"=" * 30)
-    
-    print(f"\n1. Standard Docker Setup:")
-    print(f"   python \"python cyberrange_all_in_one.py\" --scripted-agents --rounds 20")
-    
-    print(f"\n2. Enhanced Docker Setup (with honeypots):")
-    print(f"   python \"python cyberrange_all_in_one.py\" --enhanced-docker --scripted-agents --rounds 20")
-    
-    print(f"\n3. Laptop-Optimized Setup:")
-    print(f"   python \"python cyberrange_all_in_one.py\" --laptop-docker --scripted-agents --rounds 20")
-    
-    print(f"\n4. Neural Multi-Agent Setup:")
-    print(f"   python \"python cyberrange_all_in_one.py\" --enhanced-docker --multi-agent --scripted-agents --rounds 20")
-    
-    print(f"\n5. Full Neural Setup:")
-    print(f"   python \"python cyberrange_all_in_one.py\" --enhanced-docker --multi-agent --neural-arch transformer --agent-coordination --scripted-agents --rounds 50")
+        compose_files = (
+            "docker-compose.yml",
+            "monitoring/docker-compose-closed.yml",
+            "monitoring/docker-compose-enhanced.yml",
+            "monitoring/laptop-optimization.yml",
+        )
+        failures.extend(path for path in compose_files if not Path(path).is_file())
+
+        for name, inventory in inventories.items():
+            print(f"{name}: {len(inventory)} modeled assets ({', '.join(inventory)})")
+
+        if failures:
+            print("Failed checks: " + ", ".join(failures), file=sys.stderr)
+            return 1
+
+        print("Version 2 inventory contract: OK")
+        print("Run: python cyberrange.py --compose monitoring/docker-compose-enhanced.yml --scripted-agents --rounds 20")
+        return 0
+    except Exception as exc:
+        print(f"Configuration check failed: {exc}", file=sys.stderr)
+        return 1
+
 
 if __name__ == "__main__":
-    success = test_container_configurations()
-    
-    if success:
-        show_usage_commands()
-        print(f"\n✅ All configurations ready!")
-    else:
-        print(f"\n❌ Configuration test failed!")
+    raise SystemExit(main())

@@ -1,0 +1,64 @@
+name: Version 2 CI
+
+on:
+  push:
+    branches: [main, v2, "v2/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m compileall -q .
+      - run: python -m pytest -q
+      - run: python cyberrange.py --version
+
+  compose-and-suricata:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Compose models
+        run: |
+          docker compose -f docker-compose.yml config --quiet
+          docker compose -f monitoring/docker-compose.yml config --quiet
+          docker compose -f monitoring/docker-compose-closed.yml config --quiet
+          docker compose -f monitoring/docker-compose-enhanced.yml config --quiet
+          docker compose -f monitoring/laptop-optimization.yml config --quiet
+      - name: Validate shipped Suricata configuration and rules
+        run: |
+          docker run --rm \
+            --entrypoint suricata \
+            -v "$PWD/configs/suricata:/etc/suricata:ro" \
+            jasonish/suricata:7.0.11 \
+            -T -c /etc/suricata/suricata.yaml
+
+  topology-viewer:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: topology-viewer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: topology-viewer/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npm audit --omit=dev

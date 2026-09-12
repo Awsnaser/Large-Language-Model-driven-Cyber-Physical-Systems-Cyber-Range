@@ -1,234 +1,74 @@
-# Suricata Blue Team Defender Integration
+# Suricata integration — Version 2.0.0
 
-## Overview
-Added **Suricata IDS** as an advanced **Blue Team Defender** to the CPS simulation environment, providing real-time intrusion detection and network security monitoring.
+Version 2 separates safe Suricata configuration validation from live packet capture.
 
-## Components Added
+## Safe default: configuration validation
 
-### 1. Docker Integration
-- **Enhanced Setup**: `cps-suricata-ids` container in `docker-compose-closed.yml`
-- **Laptop Setup**: `cps-suricata-lite` container in `laptop-optimization.yml`
-- **Host Network Mode**: Full network visibility across all interfaces
-- **Privileged Access**: Required for packet inspection
+The `suricata-ids` service in `monitoring/docker-compose-enhanced.yml` and `monitoring/laptop-optimization.yml` uses the pinned image `jasonish/suricata:7.0.11` and runs:
 
-### 2. Configuration Files
-- **`configs/suricata/suricata.yaml`**: Main Suricata configuration
-  - CPS-specific port groups (Modbus, OPC UA, SSH honeypots)
-  - App-layer protocol detection
-  - EVE JSON logging for structured alerts
-  - Performance tuning for container environment
-
-- **`configs/suricata/custom-cps.rules`**: CPS-specific security rules
-  - Suspicious Modbus traffic detection
-  - OPC UA unauthorized connection alerts
-  - SSH brute force attack detection
-  - Web application attack patterns
-  - Honeypot access monitoring
-  - Data exfiltration detection
-  - Lateral movement indicators
-
-### 3. Python Integration
-- **Enhanced Containers**: 24 containers (including Suricata)
-- **Laptop Containers**: 16 containers (including Suricata)
-- **IP Assignment**: `172.16.0.29` (enhanced), `172.16.0.34` (laptop)
-- **Port Configuration**: HTTP 8089, SSH 2234/2241
-
-### 4. Monitoring Dashboard
-- **`suricata-monitor.py`**: Real-time monitoring application
-  - Live alert display with severity indicators
-  - Top attacker identification
-  - Targeted asset summary
-  - CPS-specific alert filtering
-  - Automated report generation
-  - JSON-based security reports
-
-## Security Rules Included
-
-### Critical Alerts
-- **Modbus Anomalies**: Function code anomalies, programming changes
-- **Data Exfiltration**: Large transfers from OT network
-- **Ransomware Activity**: Pattern-based detection
-
-### High Priority Alerts
-- **Unauthorized Access**: OPC UA connections, SSH brute force
-- **Web Attacks**: SQL injection, suspicious user agents
-- **Network Discovery**: ICMP scanning, DNS tunneling
-
-### Medium Priority Alerts
-- **Honeypot Activity**: Access attempts, credential stuffing
-- **Protocol Anomalies**: SCADA protocol issues
-- **Lateral Movement**: SSH connections between assets
-
-### Low Priority Alerts
-- **Reconnaissance**: Port scanning, service discovery
-- **Policy Violations**: TLS certificate issues
-
-## Usage Commands
-
-### Start Enhanced CPS with Suricata
 ```bash
-python "python cyberrange_all_in_one.py" --enhanced-docker --scripted-agents --rounds 20
+suricata -T -c /etc/suricata/suricata.yaml
 ```
 
-### Start Laptop-Optimized with Suricata
-```bash
-python "python cyberrange_all_in_one.py" --laptop-docker --scripted-agents --rounds 20
+It mounts these read-only project files:
+
+```text
+configs/suricata/suricata.yaml
+configs/suricata/custom-cps.rules
 ```
 
-### Start Suricata Monitoring Dashboard
+The service needs no capture capabilities and exits after checking the configuration. It does **not** monitor traffic, create a live alert stream, or automatically capture packets.
+
+Run and check the safe enhanced stack:
+
 ```bash
-python suricata-monitor.py
+docker compose -f monitoring/docker-compose-enhanced.yml config -q
+docker compose -f monitoring/docker-compose-enhanced.yml up -d
+docker compose -f monitoring/docker-compose-enhanced.yml ps suricata-ids
 ```
 
-### Check Suricata Status
+A zero exit status from `suricata-ids` means the shipped configuration passed its Suricata validation. It is not evidence that an interface is being observed or that a rule will detect a scenario. Treat nonzero status as a configuration/runtime validation failure and inspect the job logs:
+
 ```bash
-docker ps --filter name=suricata
-docker logs cps-suricata-ids
+docker compose -f monitoring/docker-compose-enhanced.yml logs suricata-ids
 ```
 
-### View Real-time Alerts
+The laptop file offers the same offline validation behavior with resource limits. `monitoring/docker-compose-closed.yml` is a four-service closed range and does not add a Suricata service.
+
+## Explicit live capture: isolated lab only
+
+Live capture exists only as `suricata-live` in the enhanced Compose file. It is behind the named `dangerous-packet-capture` profile and is not selected by a normal `docker compose up` or any normal `cyberrange.py` command.
+
 ```bash
-docker exec cps-suricata-ids tail -f /var/log/suricata/eve.json
+# Perform this only on an isolated lab host after reviewing Docker access,
+# interfaces, traffic scope, storage, and applicable policy.
+docker compose -f monitoring/docker-compose-enhanced.yml \
+  --profile dangerous-packet-capture up -d
 ```
 
-## Integration Features
+`suricata-live` runs on its Compose bridge network, not host networking, and explicitly requests `NET_ADMIN` and `NET_RAW`. Those capabilities are why it is opt-in. Stop it with:
 
-### Network Visibility
-- **Host Network Mode**: Monitors all network interfaces
-- **Protocol Detection**: Modbus, OPC UA, DNP3, EtherNet/IP
-- **Honeypot Monitoring**: All honeypot traffic analysis
-- **Cross-Network Detection**: IT/OT network boundary monitoring
-
-### Alert Correlation
-- **EVE JSON Format**: Structured alert data
-- **Timestamp Correlation**: Event timeline analysis
-- **Source/Destination Tracking**: Attack path mapping
-- **Severity Classification**: Priority-based alerting
-
-### Performance Optimization
-- **Resource Limits**: 512MB memory, 0.5 CPU (laptop)
-- **Threshold Rules**: Rate limiting for alert storms
-- **Log Rotation**: Automatic log management
-- **Efficient Rulesets**: Optimized for CPS environment
-
-## Blue Team Defender Capabilities
-
-### Real-time Detection
-- **Immediate Alerting**: Sub-second detection
-- **Pattern Matching**: Advanced signature detection
-- **Behavioral Analysis**: Anomaly detection rules
-- **Protocol Analysis**: Deep packet inspection
-
-### Threat Intelligence
-- **Attacker Profiling**: IP-based tracking
-- **Attack Pattern Recognition**: TTP identification
-- **Asset Targeting**: Critical asset protection
-- **Trend Analysis**: Attack trend monitoring
-
-### Incident Response
-- **Alert Prioritization**: Severity-based response
-- **Automated Reporting**: JSON-based reports
-- **Integration Ready**: SIEM integration capability
-- **Forensic Data**: PCAP correlation
-
-## Container Specifications
-
-### Enhanced Suricata Container
-- **Image**: `jasonish/suricata:latest`
-- **Resources**: Unlimited (production)
-- **Features**: Full rule set, automatic updates
-- **Storage**: Dedicated log volume
-
-### Laptop Suricata Container
-- **Image**: `jasonish/suricata:latest`
-- **Resources**: 512MB memory, 0.5 CPU
-- **Features**: Optimized rule set, basic logging
-- **Storage**: Shared log volume
-
-## Monitoring Dashboard Features
-
-### Real-time Display
-- **Alert Stream**: Live alert feed
-- **Severity Indicators**: Visual priority markers
-- **Statistics**: Alert count by severity
-- **Recent History**: Last 10 alerts
-
-### Analysis Tools
-- **Top Attackers**: Most active source IPs
-- **Target Summary**: Most targeted assets
-- **CPS Alerts**: Industrial system specific alerts
-- **Trend Analysis**: Time-based patterns
-
-### Reporting
-- **JSON Reports**: Structured data export
-- **Statistics Summary**: Comprehensive metrics
-- **Alert History**: Complete alert log
-- **Performance Data**: System performance metrics
-
-## Benefits for CPS Security
-
-### Enhanced Visibility
-- **Network-wide Monitoring**: Complete traffic visibility
-- **Protocol Awareness**: Industrial protocol understanding
-- **Honeypot Integration**: Decoy system monitoring
-- **Cross-segment Analysis**: IT/OT boundary protection
-
-### Proactive Defense
-- **Early Detection**: Attack identification before impact
-- **Pattern Recognition**: Known attack pattern detection
-- **Anomaly Detection**: Unusual behavior identification
-- **Threat Intelligence**: Attacker behavior analysis
-
-### Compliance Support
-- **Audit Trail**: Complete security event logging
-- **Incident Documentation**: Detailed alert records
-- **Performance Metrics**: System effectiveness data
-- **Reporting Capability**: Automated report generation
-
-## Troubleshooting
-
-### Common Issues
-1. **Container Not Starting**: Check Docker permissions
-2. **No Alerts Generated**: Verify network traffic
-3. **High Resource Usage**: Adjust resource limits
-4. **Missing Logs**: Check volume mounts
-
-### Debug Commands
 ```bash
-# Check container status
-docker ps --filter name=suricata
-
-# View logs
-docker logs cps-suricata-ids
-
-# Check configuration
-docker exec cps-suricata-ids suricata -T
-
-# Test rule syntax
-docker exec cps-suricata-ids suricatasc -c /etc/suricata/suricata.yaml
+docker compose -f monitoring/docker-compose-enhanced.yml \
+  --profile dangerous-packet-capture down -v
 ```
 
-## Future Enhancements
+Do not treat this profile as a production IDS deployment, a complete isolation boundary, or host-wide capture.
 
-### Planned Features
-- **Machine Learning Integration**: Anomaly detection models
-- **Threat Feeds**: External intelligence integration
-- **Automated Response**: Active defense capabilities
-- **Advanced Analytics**: Behavioral analysis tools
+## Related monitoring
 
-### Integration Opportunities
-- **Neural Agent Coordination**: AI-driven response
-- **Multi-agent Learning**: Shared threat intelligence
-- **Automated Mitigation**: Dynamic defense adaptation
-- **Predictive Analytics**: Attack prediction models
+Prometheus and Grafana are separate Compose services. Their published Compose ports bind to `127.0.0.1`. Configure Grafana before startup:
 
-## Summary
+```bash
+export GRAFANA_ADMIN_PASSWORD='use-a-unique-local-password'
+```
 
-The Suricata Blue Team Defender integration provides:
-- **24/7 Network Monitoring**: Continuous security surveillance
-- **CPS-Specific Protection**: Industrial protocol security
-- **Real-time Alerting**: Immediate threat notification
-- **Comprehensive Reporting**: Detailed security analytics
-- **Scalable Architecture**: Adaptable to different environments
+The configured Grafana user is `admin`; `admin/admin` is not a supported default. The Python runner's optional `--metrics` endpoint is host-side and should be reviewed separately for exposure.
 
-This creates a **complete blue team defense capability** for the CPS simulation environment, enabling realistic cybersecurity training and research scenarios.
+## Troubleshooting checklist
+
+1. Confirm Docker Engine and Compose v2: `docker info` and `docker compose version`.
+2. Validate the rendered file: `docker compose -f monitoring/docker-compose-enhanced.yml config -q`.
+3. Check the one-shot validation job logs and exit state, not an assumed long-running IDS container.
+4. Verify the mounted rule/config paths are the Version 2 paths above.
+5. Enable `dangerous-packet-capture` only when live bridge-interface capture is deliberately required and authorized.
