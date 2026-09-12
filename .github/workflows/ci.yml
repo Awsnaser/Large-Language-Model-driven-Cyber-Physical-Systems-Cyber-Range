@@ -40,6 +40,7 @@ jobs:
       - name: Validate shipped Suricata configuration and rules
         run: |
           docker run --rm \
+            --entrypoint suricata \
             -v "$PWD/configs/suricata:/etc/suricata:ro" \
             jasonish/suricata:7.0.11 \
             -T -c /etc/suricata/suricata.yaml
