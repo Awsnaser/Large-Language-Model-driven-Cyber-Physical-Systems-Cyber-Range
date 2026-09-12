@@ -98,3 +98,7 @@ Open the Vite URL and use **Load JSON** to select a file produced by `--export-t
 - A successful Suricata `-T` job validates configuration syntax; it is not evidence of live detection.
 
 See [QUICK_START.md](QUICK_START.md) for a short workflow, [SETUP.md](SETUP.md) for prerequisites, and [VERSION_2.md](VERSION_2.md) for migration and the full upgrade checklist.
+
+## Next version roadmap
+
+[VERSION_3_PLAN.md](VERSION_3_PLAN.md) defines the proposed five-architecture, scenario-driven roadmap, including centralized mission control, a decentralized virtual-drone swarm, hierarchical edge–cloud operations, federated multi-site defense, and event-driven autonomous resilience. All drone scenarios are software-in-the-loop and isolated by default.
