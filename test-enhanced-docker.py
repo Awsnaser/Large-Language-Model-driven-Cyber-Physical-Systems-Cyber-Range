@@ -1,106 +1,68 @@
 #!/usr/bin/env python3
-"""
-Test script for enhanced docker containers
-"""
+"""Static smoke checks for the supported Version 2 Compose profiles."""
+
+from __future__ import annotations
 
 import subprocess
 import sys
-import os
+from pathlib import Path
 
-def test_docker_compose():
-    """Test different docker-compose configurations"""
-    
-    print("🐳 Testing Enhanced Docker Containers")
-    print("=" * 50)
-    
-    # Test 1: Standard containers
-    print("\n1. Testing Standard Containers:")
+COMPOSE_FILES = (
+    "docker-compose.yml",
+    "monitoring/docker-compose-closed.yml",
+    "monitoring/docker-compose-enhanced.yml",
+    "monitoring/laptop-optimization.yml",
+    "monitoring/docker-compose.yml",
+)
+
+
+def run() -> int:
+    failures: list[str] = []
+
+    version = subprocess.run(
+        [sys.executable, "cyberrange.py", "--version"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if version.returncode or "2.0.0" not in version.stdout:
+        failures.append("canonical Version 2 entry point")
+
+    for path in COMPOSE_FILES:
+        if not Path(path).is_file():
+            failures.append(f"missing {path}")
+
     try:
-        result = subprocess.run([
-            sys.executable, "python cyberrange_all_in_one.py",
-            "--no-docker-up", "--no-write-compose"
-        ], capture_output=True, text=True, timeout=30)
-        
-        if result.returncode == 0:
-            print("✅ Standard configuration works")
-        else:
-            print(f"❌ Standard configuration failed: {result.stderr}")
-    except Exception as e:
-        print(f"❌ Standard test error: {e}")
-    
-    # Test 2: Enhanced containers
-    print("\n2. Testing Enhanced Containers:")
-    try:
-        result = subprocess.run([
-            sys.executable, "python cyberrange_all_in_one.py",
-            "--enhanced-docker", "--no-docker-up", "--no-write-compose"
-        ], capture_output=True, text=True, timeout=30)
-        
-        if result.returncode == 0:
-            print("✅ Enhanced configuration works")
-            if "Total containers: 23" in result.stdout:
-                print("✅ Enhanced container count correct")
-            else:
-                print("⚠️  Container count might be wrong")
-        else:
-            print(f"❌ Enhanced configuration failed: {result.stderr}")
-    except Exception as e:
-        print(f"❌ Enhanced test error: {e}")
-    
-    # Test 3: Laptop containers
-    print("\n3. Testing Laptop Containers:")
-    try:
-        result = subprocess.run([
-            sys.executable, "python cyberrange_all_in_one.py",
-            "--laptop-docker", "--no-docker-up", "--no-write-compose"
-        ], capture_output=True, text=True, timeout=30)
-        
-        if result.returncode == 0:
-            print("✅ Laptop configuration works")
-            if "Total containers: 15" in result.stdout:
-                print("✅ Laptop container count correct")
-            else:
-                print("⚠️  Container count might be wrong")
-        else:
-            print(f"❌ Laptop configuration failed: {result.stderr}")
-    except Exception as e:
-        print(f"❌ Laptop test error: {e}")
-    
-    # Test 4: Check docker-compose files exist
-    print("\n4. Checking Docker Compose Files:")
-    
-    files_to_check = [
-        "docker-compose.yml",
-        "monitoring/docker-compose-closed.yml",
-        "monitoring/laptop-optimization.yml"
-    ]
-    
-    for file_path in files_to_check:
-        if os.path.exists(file_path):
-            print(f"✅ {file_path} exists")
-        else:
-            print(f"❌ {file_path} missing")
-    
-    # Test 5: Check if Docker is available
-    print("\n5. Checking Docker Availability:")
-    try:
-        result = subprocess.run(["docker", "--version"], capture_output=True, text=True)
-        print(f"✅ Docker available: {result.stdout.strip()}")
-        
-        # Check docker-compose
-        result = subprocess.run(["docker-compose", "--version"], capture_output=True, text=True)
-        print(f"✅ Docker Compose available: {result.stdout.strip()}")
-        
-    except Exception as e:
-        print(f"❌ Docker not available: {e}")
-    
-    print("\n🎯 Quick Test Commands:")
-    print("Run enhanced containers:")
-    print("  python python\\ cyberrange_all_in_one.py --enhanced-docker --scripted-agents --rounds 10")
-    print("\nRun laptop containers:")
-    print("  python python\\ cyberrange_all_in_one.py --laptop-docker --scripted-agents --rounds 10")
-    print("\nRun standard containers:")
-    print("  python python\\ cyberrange_all_in_one.py --scripted-agents --rounds 10")
+        docker = subprocess.run(
+            ["docker", "compose", "version"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        docker = None
+
+    if docker is None or docker.returncode:
+        print("Docker Compose unavailable; static Python tests still apply.")
+    else:
+        for path in COMPOSE_FILES:
+            result = subprocess.run(
+                ["docker", "compose", "-f", path, "config", "--quiet"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode:
+                failures.append(f"Compose validation failed for {path}: {result.stderr.strip()}")
+
+    if failures:
+        for failure in failures:
+            print(f"FAIL: {failure}", file=sys.stderr)
+        return 1
+
+    print("Version 2 Docker profile contract: OK")
+    return 0
+
 
 if __name__ == "__main__":
-    test_docker_compose()
+    raise SystemExit(run())

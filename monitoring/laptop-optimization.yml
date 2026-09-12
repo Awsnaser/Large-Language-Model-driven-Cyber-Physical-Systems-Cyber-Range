@@ -1,349 +1,150 @@
-version: '3.8'
-
-# Lightweight version for laptop deployment
-# Reduced resource usage and optimized for performance
+# Laptop-friendly, safe-by-default CPS range. Run from the repository root with:
+# docker compose -f monitoring/laptop-optimization.yml up -d
+# This intentionally keeps the same service and container names as the enhanced
+# stack, but omits live packet capture and non-functional draft infrastructure.
 services:
-  # === CORE MONITORING (Lightweight) ===
-  grafana:
-    image: grafana/grafana:latest
-    container_name: cps-grafana-lite
-    ports:
-      - "3000:3000"
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_SECURITY_DISABLE_GRAVATAR=true
-      - GF_ANALYTICS_REPORTING_ENABLED=false
-      - GF_FEATURE_TOGGLES_ENABLE=publicDashboards
-    volumes:
-      - grafana_data:/var/lib/grafana
+  gw_dmz_01:
+    container_name: gw_dmz_01
+    image: alpine:3.20
+    command: ["sh", "-c", "apk add --no-cache openssh busybox-extras && ssh-keygen -A && adduser -D -s /bin/sh trainee && echo 'trainee:trainee' | chpasswd && /usr/sbin/sshd -D -e"]
     networks:
-      - cps_network
+      dmz_net:
+        aliases: ["gw_dmz_01"]
+    ports:
+      - "127.0.0.1:2222:22"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 22 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 8
+    read_only: true
+    tmpfs: [/run, /tmp]
     deploy:
       resources:
-        limits:
-          memory: 512M
-          cpus: '0.5'
+        limits: {memory: 128M, cpus: "0.25"}
+    restart: unless-stopped
+
+  hist_data_01:
+    container_name: hist_data_01
+    image: nginx:1.27-alpine
+    networks:
+      dmz_net:
+        aliases: ["hist_data_01"]
+    ports:
+      - "127.0.0.1:8080:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:80 >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 8
+    read_only: true
+    tmpfs: [/var/cache/nginx, /var/run, /tmp]
+    deploy:
+      resources:
+        limits: {memory: 128M, cpus: "0.25"}
+    restart: unless-stopped
+
+  hmi_ops_01:
+    container_name: hmi_ops_01
+    image: alpine:3.20
+    command: ["sh", "-c", "apk add --no-cache busybox-extras && sleep infinity"]
+    networks:
+      ot_net:
+        aliases: ["hmi_ops_01"]
+    healthcheck:
+      test: ["CMD-SHELL", "ps | grep -q sleep || exit 1"]
+      interval: 20s
+      timeout: 3s
+      retries: 5
+    read_only: true
+    tmpfs: [/tmp]
+    deploy:
+      resources:
+        limits: {memory: 64M, cpus: "0.15"}
+    restart: unless-stopped
+
+  plc_industrial_01:
+    container_name: plc_industrial_01
+    image: alpine:3.20
+    command: ["sh", "-c", "mkdir -p /plc && echo 'SAFE_v2' > /plc/logic_hash && sleep infinity"]
+    networks:
+      ot_net:
+        aliases: ["plc_industrial_01"]
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /plc/logic_hash || exit 1"]
+      interval: 20s
+      timeout: 3s
+      retries: 5
+    volumes:
+      - plc_state:/plc
+    deploy:
+      resources:
+        limits: {memory: 64M, cpus: "0.15"}
     restart: unless-stopped
 
   prometheus:
-    image: prom/prometheus:latest
-    container_name: cps-prometheus-lite
+    container_name: cps_prometheus
+    image: prom/prometheus:v2.54.1
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus", "--storage.tsdb.retention.time=24h"]
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
-      - ./monitoring/prometheus-lite.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--storage.tsdb.retention.time=24h'  # Reduced retention
-      - '--web.console.libraries=/etc/prometheus/console_libraries'
-    networks:
-      - cps_network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks: [monitoring_net]
     deploy:
       resources:
-        limits:
-          memory: 512M
-          cpus: '0.5'
+        limits: {memory: 256M, cpus: "0.25"}
     restart: unless-stopped
 
-  # === INDUSTRIAL SYSTEMS (Essential Only) ===
-  
-  # Lightweight PLC Simulator
-  plc-simulator:
-    image: python:3.9-alpine
-    container_name: cps-plc-lite
+  grafana:
+    container_name: cps_grafana
+    image: grafana/grafana:11.2.0
+    depends_on: [prometheus]
     ports:
-      - "502:502"
-    volumes:
-      - ./scripts/plc-simulator.py:/app/plc-simulator.py
-      - plc_logs:/logs
-    networks:
-      - ot_network
-    command: >
-      sh -c "
-      apk add --no-cache py3-pip
-      pip install pymodbus
-      python /app/plc-simulator.py
-      "
-    deploy:
-      resources:
-        limits:
-          memory: 256M
-          cpus: '0.3'
-    restart: unless-stopped
-
-  # Lightweight OPC UA Server
-  opcua-server:
-    image: open62541/open62541:latest
-    container_name: cps-opcua-lite
-    ports:
-      - "4840:4840"
+      - "127.0.0.1:3000:3000"
     environment:
-      - SERVER_ENDPOINT=opc.tcp://0.0.0.0:4840
-      - SERVER_NAME=CPS_OPCUA_Lite
-    networks:
-      - ot_network
-    deploy:
-      resources:
-        limits:
-          memory: 256M
-          cpus: '0.3'
-    restart: unless-stopped
-
-  # Simple HMI Web Interface
-  hmi-simulator:
-    image: nginx:alpine
-    container_name: cps-hmi-lite
-    ports:
-      - "8080:80"
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-change-me-before-sharing}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
     volumes:
-      - ./configs/hmi-lite:/usr/share/nginx/html
-      - hmi_logs:/var/log/nginx
-    networks:
-      - ot_network
-    depends_on:
-      - plc-simulator
-      - opcua-server
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    networks: [monitoring_net]
     deploy:
       resources:
-        limits:
-          memory: 128M
-          cpus: '0.2'
+        limits: {memory: 256M, cpus: "0.25"}
     restart: unless-stopped
 
-  # === IT INFRASTRUCTURE (Minimal) ===
-  
-  # Simple Web Server
-  web-server:
-    image: nginx:alpine
-    container_name: cps-web-lite
-    ports:
-      - "80:80"
-    volumes:
-      - ./configs/web-lite:/usr/share/nginx/html
-      - web_logs:/var/log/nginx
-    networks:
-      - it_network
-    deploy:
-      resources:
-        limits:
-          memory: 128M
-          cpus: '0.2'
-    restart: unless-stopped
-
-  # Lightweight Database
-  database-server:
-    image: postgres:15-alpine
-    container_name: cps-db-lite
-    ports:
-      - "5432:5432"
-    environment:
-      - POSTGRES_DB=cps_lite
-      - POSTGRES_USER=cps_user
-      - POSTGRES_PASSWORD=cps_pass
-      - POSTGRES_INITDB_ARGS=--max-connections=50
-    volumes:
-      - db_data:/var/lib/postgresql/data
-    networks:
-      - it_network
-    deploy:
-      resources:
-        limits:
-          memory: 256M
-          cpus: '0.3'
-    restart: unless-stopped
-
-  # === HONEYPOTS (Lightweight) ===
-  
-  # Honeypot PLC (Python-based)
-  honeypot-plc:
-    image: python:3.9-alpine
-    container_name: cps-honeypot-plc-lite
-    ports:
-      - "1502:502"
-    volumes:
-      - ./scripts/honeypot-plc.py:/app/honeypot-plc.py
-      - honeypot_logs:/var/log/honeypots
-    networks:
-      - ot_network
-    command: >
-      sh -c "
-      apk add --no-cache py3-pip
-      pip install pymodbus
-      python /app/honeypot-plc.py
-      "
-    deploy:
-      resources:
-        limits:
-          memory: 128M
-          cpus: '0.2'
-    restart: unless-stopped
-
-  # Honeypot Web Server
-  honeypot-web:
-    image: nginx:alpine
-    container_name: cps-honeypot-web-lite
-    ports:
-      - "8081:80"
-    volumes:
-      - ./configs/honeypot-web-lite:/usr/share/nginx/html
-      - honeypot_logs:/var/log/honeypots
-    networks:
-      - it_network
-    deploy:
-      resources:
-        limits:
-          memory: 64M
-          cpus: '0.1'
-    restart: unless-stopped
-
-  # Honeypot SSH
-  honeypot-ssh:
-    image: ghcr.io/mushroomlabs/honeypot-ssh:latest
-    container_name: cps-honeypot-ssh-lite
-    ports:
-      - "2222:22"
-    environment:
-      - HONEYPOT_TYPE=SSH
-      - LOG_LEVEL=BASIC
-      - ENABLE_WEAK_PASSWORDS=true
-    volumes:
-      - honeypot_logs:/var/log/honeypots
-    networks:
-      - it_network
-    deploy:
-      resources:
-        limits:
-          memory: 64M
-          cpus: '0.1'
-    restart: unless-stopped
-
-  # === SECURITY MONITORING (Lightweight) ===
-  
-  # Lightweight Suricata IDS
+  # The laptop profile validates the same IDS configuration offline; it never
+  # requests packet-capture capabilities. Use the enhanced profile, not this
+  # file, if an isolated lab needs opt-in live capture.
   suricata-ids:
-    image: jasonish/suricata:latest
-    container_name: cps-suricata-lite
-    privileged: true
-    network_mode: host
-    cap_add:
-      - NET_ADMIN
-      - NET_RAW
+    container_name: cps_suricata_ids
+    image: jasonish/suricata:7.0.11
+    command: ["-T", "-c", "/etc/suricata/suricata.yaml"]
     volumes:
-      - ./configs/suricata:/etc/suricata
-      - suricata_logs:/var/log/suricata
-    environment:
-      - SURICATA_INTERFACE=any
-      - ENABLE_EVE_JSON=true
-      - LOG_LEVEL=info
-    command: >
-      sh -c "
-      suricata -c /etc/suricata/suricata.yaml -i any --set eve-log.filename=/var/log/suricata/eve.json
-      "
+      - ../configs/suricata:/etc/suricata:ro
+      - ../configs/suricata/logs:/var/log/suricata
+    networks: [monitoring_net]
     deploy:
       resources:
-        limits:
-          memory: 512M
-          cpus: '0.5'
-    restart: unless-stopped
-
-  # === TRAFFIC GENERATION (Lightweight) ===
-  
-  traffic-gen:
-    image: alpine:latest
-    container_name: cps-traffic-lite
-    networks:
-      - it_network
-      - ot_network
-    command: >
-      sh -c "
-      apk add --no-cache curl netcat-openbsd
-      while true; do
-        # Minimal traffic generation
-        curl -s http://web-server/ 2>/dev/null &
-        nc -zv plc-simulator 502 2>/dev/null &
-        nc -zv honeypot-plc 1502 2>/dev/null &
-        curl -s http://honeypot-web/ 2>/dev/null &
-        sleep 300  # Every 5 minutes
-      done
-      "
-    deploy:
-      resources:
-        limits:
-          memory: 64M
-          cpus: '0.1'
-    restart: unless-stopped
-
-  # === SECURITY MONITORING (Minimal) ===
-  
-  # Simple Log Collector
-  log-collector:
-    image: fluent/fluent-bit:latest
-    container_name: cps-log-lite
-    volumes:
-      - ./configs/fluent-bit-lite:/fluent-bit/etc
-      - honeypot_logs:/var/log/honeypots:ro
-      - plc_logs:/var/log/plc:ro
-      - web_logs:/var/log/nginx:ro
-    networks:
-      - cps_network
-    deploy:
-      resources:
-        limits:
-          memory: 128M
-          cpus: '0.2'
-    restart: unless-stopped
-
-  # Lightweight Packet Capture
-  packet-capture:
-    image: alpine:latest
-    container_name: cps-pcap-lite
-    network_mode: host
-    cap_add:
-      - NET_ADMIN
-      - NET_RAW
-    volumes:
-      - ./pcaps:/pcaps
-    command: >
-      sh -c "
-      apk add --no-cache tcpdump
-      tcpdump -i any -w /pcaps/capture_$(date +%Y%m%d_%H%M%S).pcap -C 50 -W 5 'not port 3000 and not port 9090' &
-      sleep 3600
-      killall tcpdump 2>/dev/null
-      "
-    deploy:
-      resources:
-        limits:
-          memory: 64M
-          cpus: '0.1'
+        limits: {memory: 256M, cpus: "0.25"}
+    restart: "no"
 
 networks:
-  it_network:
+  dmz_net:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 192.168.100.0/24
-  
-  ot_network:
+  ot_net:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 192.168.102.0/24
-  
-  cps_network:
+  monitoring_net:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 172.16.100.0/24
 
 volumes:
-  grafana_data:
+  plc_state:
   prometheus_data:
-  plc_logs:
-  hmi_logs:
-  web_logs:
-  db_data:
-  honeypot_logs:
-  suricata_logs:
-  pcaps:
+  grafana_data:

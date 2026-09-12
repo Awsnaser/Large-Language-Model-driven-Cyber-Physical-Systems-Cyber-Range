@@ -1,323 +1,126 @@
-# 🚀 Quick Start Guide
+# Quick Start — Version 2.0.0
 
-Get the Advanced Cyber-Physical Range Simulator running in minutes!
+Use the canonical entry point: `python cyberrange.py`.
 
-## ⚡ 5-Minute Quick Start
+## 1. Install
 
-### 1. Prerequisites
 ```bash
-# Check Python version (3.8+ required)
-python --version
-
-# Check Docker installation
-docker --version
-docker-compose --version
+python --version                     # Python 3.10+
+python -m venv .venv
+source .venv/bin/activate            # Windows: .venv\Scripts\activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python cyberrange.py --version       # 2.0.0
 ```
 
-### 2. Install Dependencies
-```bash
-# Basic dependencies
-pip install docker matplotlib numpy scipy scikit-learn faker prometheus-client
+## 2. Run a safe simulator-only smoke test
 
-# Clone and navigate to project
-git clone <your-repo-url>
-cd advanced-cyber-range-simulator
+```bash
+python cyberrange.py --no-docker-up --scripted-agents --rounds 10
 ```
 
-### 3. Run Basic Simulation
+This does not start Docker services and does not need Ollama. `--no-docker-up` may still attempt Docker metadata lookup; if Docker is unavailable, the simulator uses placeholder IPs.
+
+## 3. Start the default Docker range
+
+Install Docker Engine and Compose v2, then verify them:
+
 ```bash
-# Quick test with standard setup
-python "python cyberrange_all_in_one.py" --scripted-agents --rounds 5
+docker compose version
+docker info
+python cyberrange.py --scripted-agents --rounds 20
 ```
 
-### 4. Run Enhanced Setup
+The default range starts the four services in `docker-compose.yml`. Stop it with:
+
 ```bash
-# Full CPS environment with all containers
-python "python cyberrange_all_in_one.py" --enhanced-docker --scripted-agents --rounds 10
+docker compose down -v
 ```
 
-### 5. Start Security Monitoring
+## 4. Choose a safe profile
+
 ```bash
-# In a new terminal, start Suricata monitoring
-python suricata-monitor.py
+# Enhanced safe range with monitoring and offline IDS validation.
+python cyberrange.py --enhanced-docker --scripted-agents --rounds 20
+
+# Closed four-service profile, selected explicitly.
+python cyberrange.py --compose monitoring/docker-compose-closed.yml --scripted-agents --rounds 20
+
+# Resource-limited range plus monitoring and offline Suricata validation.
+python cyberrange.py --laptop-docker --scripted-agents --rounds 20
+
+# Safe enhanced stack with monitoring and offline Suricata validation.
+python cyberrange.py --compose monitoring/docker-compose-enhanced.yml \
+  --scripted-agents --rounds 20
 ```
 
-## 🎯 Success Indicators
+All normal profiles avoid host networking, privileged containers, and packet-capture capabilities. Published Compose management ports bind to `127.0.0.1`; do not interpret that as a guarantee of complete host isolation.
 
-You should see:
-- ✅ Container startup messages
-- ✅ Round-by-round simulation progress
-- ✅ Red vs Blue agent actions
-- ✅ Physical process updates (tank level, alarms)
-- ✅ Final summary with statistics
+## 5. Use Suricata safely
 
-## 🐳 Docker Setup Options
+The normal `suricata-ids` service only runs `suricata -T` against `configs/suricata/suricata.yaml` and then exits. It validates configuration; it does not capture traffic automatically.
 
-### Option 1: Standard (4 containers)
 ```bash
-python "python cyberrange_all_in_one.py" --scripted-agents --rounds 20
-```
-**Best for**: Quick testing, development, learning
-
-### Option 2: Enhanced (26 containers)
-```bash
-python "python cyberrange_all_in_one.py" --enhanced-docker --scripted-agents --rounds 20
-```
-**Best for**: Full research, security testing, realistic simulation
-
-### Option 3: Laptop (16 containers)
-```bash
-python "python cyberrange_all_in_one.py" --laptop-docker --scripted-agents --rounds 20
-```
-**Best for**: Resource-constrained systems, laptops
-
-## 🧠 Neural Multi-Agent System
-
-### Basic Neural Setup
-```bash
-python "python cyberrange_all_in_one.py" \
-  --enhanced-docker \
-  --multi-agent \
-  --scripted-agents \
-  --rounds 20
+docker compose -f monitoring/docker-compose-enhanced.yml up -d
+docker compose -f monitoring/docker-compose-enhanced.yml ps suricata-ids
 ```
 
-### Advanced Neural Configuration
+Live capture is separately opt-in and is intended only for an isolated lab host:
+
 ```bash
-python "python cyberrange_all_in_one.py" \
-  --enhanced-docker \
-  --multi-agent \
-  --num-attackers 4 \
-  --num-defenders 4 \
-  --num-analysts 2 \
-  --neural-arch transformer \
-  --agent-coordination \
-  --neural-training \
-  --scripted-agents \
-  --rounds 50
+docker compose -f monitoring/docker-compose-enhanced.yml \
+  --profile dangerous-packet-capture up -d
 ```
 
-## 🔍 Security Monitoring
+This adds `suricata-live`, which requests `NET_ADMIN` and `NET_RAW` on its Compose bridge interface. It is not host-network capture.
 
-### Start Suricata Dashboard
+## Optional features
+
+### Local LLM agents
+
+Omit `--scripted-agents` only after a local Ollama service and the selected models are available:
+
 ```bash
-python suricata-monitor.py
+python cyberrange.py --rounds 20 --model-red llama3.2:1b --model-blue llama3.2:1b
 ```
 
-### Check Container Status
+### Neural subsystem
+
 ```bash
-# List running containers
-docker ps --filter name=cps-
-
-# View Suricata logs
-docker logs cps-suricata-ids
-
-# Check network traffic
-docker exec cps-suricata-ids tail -f /var/log/suricata/eve.json
+python -m pip install -r requirements-neural.txt
+python cyberrange.py --no-docker-up --multi-agent \
+  --neural-arch deep_feedforward --rounds 20
 ```
 
-## 📊 Monitoring Stack
+Only `deep_feedforward` and `deep` are supported runner choices. `--neuroevolution` is not wired into the Version 2 loop.
 
-### Start Grafana + Prometheus
+### Monitoring and Grafana
+
 ```bash
-python "python cyberrange_all_in_one.py" --metrics --monitoring-up
+export GRAFANA_ADMIN_PASSWORD='use-a-unique-local-password'
+python cyberrange.py --metrics --monitoring-up --scripted-agents --rounds 20
 ```
 
-### Access Dashboards
-- **Grafana**: http://localhost:3000 (admin/admin)
-- **Prometheus**: http://localhost:9090
-- **Suricata Monitor**: Run `python suricata-monitor.py`
+Grafana uses the configured `admin` user and the password above; there is no `admin/admin` default. Review the host-side metrics listener independently of the loopback-only Compose port mappings.
 
-## 🎮 Interactive Features
+### Topology viewer
 
-### Interactive Terminal UI
 ```bash
-python "python cyberrange_all_in_one.py" \
-  --interactive-startup \
-  --live-round-ui \
-  --color-ui \
-  --scripted-agents \
-  --rounds 20
-```
-
-### Visualization Options
-```bash
-# Generate plots and animations
-python "python cyberrange_all_in_one.py" \
-  --separate-plots \
-  --save-plot outputs/simulation.png \
-  --scripted-agents \
-  --rounds 50
-```
-
-### React Topology Viewer
-```bash
+python cyberrange.py --no-docker-up --scripted-agents --rounds 20 \
+  --export-topology-json outputs/topology.json
 cd topology-viewer
 npm install
-npm start
-# Then open http://localhost:3000
+npm run dev
 ```
 
-## 🧪 Testing and Verification
+Open the Vite URL and select the export with **Load JSON**.
 
-### Quick System Test
-```bash
-python test-enhanced-docker.py
-```
+## If something fails
 
-### Neural Network Test
-```bash
-python test-neural-system.py
-```
+1. Confirm Python 3.10+ and reinstall `requirements.txt`.
+2. For Docker runs, check `docker info` and `docker compose -f <file> config -q`.
+3. Use `--scripted-agents` to rule out Ollama/model availability.
+4. Install optional packages before their features: Torch for `--multi-agent`, `pymodbus` for `--real-modbus`, and `scapy` for `--pcap`.
+5. Treat a failed or nonzero `suricata-ids` job as a configuration-validation failure; an exited-successfully job is not a live-capture service.
 
-### Suricata Integration Test
-```bash
-python test-suricata.py
-```
-
-## 🔧 Common Issues & Solutions
-
-### Docker Issues
-```bash
-# Clean up containers
-docker-compose -f monitoring/docker-compose-closed.yml down --remove-orphans
-docker system prune -f
-
-# Restart Docker Desktop
-# (Restart Docker Desktop application)
-```
-
-### Python Dependencies
-```bash
-# Install missing packages
-pip install docker matplotlib numpy scipy scikit-learn faker
-
-# For neural networks
-pip install torch torchvision transformers
-```
-
-### Port Conflicts
-```bash
-# Check port usage
-netstat -tulpn | grep :3000
-netstat -tulpn | grep :9090
-
-# Kill conflicting processes
-sudo kill -9 <PID>
-```
-
-### Permission Issues (Linux/Mac)
-```bash
-# Add user to docker group
-sudo usermod -aG docker $USER
-# Then log out and log back in
-```
-
-## 📈 Performance Tips
-
-### For Enhanced Setup (26 containers)
-- **RAM**: 8GB+ recommended
-- **CPU**: 4+ cores recommended
-- **Disk**: 10GB+ free space
-
-### For Laptop Setup (16 containers)
-- **RAM**: 4GB+ recommended
-- **CPU**: 2+ cores recommended
-- **Disk**: 5GB+ free space
-
-### GPU Acceleration (Neural Networks)
-```bash
-# Check CUDA availability
-python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}')"
-
-# Install CUDA PyTorch (if available)
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
-```
-
-## 🎯 Example Workflows
-
-### Research Workflow
-```bash
-# 1. Start enhanced environment
-python "python cyberrange_all_in_one.py" --enhanced-docker --scripted-agents --rounds 50
-
-# 2. Start monitoring
-python suricata-monitor.py
-
-# 3. Analyze results
-python "python cyberrange_all_in_one.py" --export-dataset research_data
-```
-
-### Development Workflow
-```bash
-# 1. Quick test
-python "python cyberrange_all_in_one.py" --scripted-agents --rounds 5
-
-# 2. Run tests
-python test-neural-system.py
-
-# 3. Start visualization
-cd topology-viewer && npm start
-```
-
-### Training Workflow
-```bash
-# 1. Neural multi-agent training
-python "python cyberrange_all_in_one.py" \
-  --enhanced-docker \
-  --multi-agent \
-  --neural-training \
-  --save-neural-models models/trained_agents.pt \
-  --rounds 100
-
-# 2. Evaluate performance
-python "python cyberrange_all_in_one.py" \
-  --enhanced-docker \
-  --multi-agent \
-  --scripted-agents \
-  --rounds 50
-```
-
-## 📚 Next Steps
-
-### Learn More
-- **README.md**: Complete project overview
-- **SETUP.md**: Detailed installation guide
-- **CONTRIBUTING.md**: Development guidelines
-- **SURICATA_INTEGRATION.md**: Security monitoring
-
-### Advanced Features
-- **Benchmark Mode**: Performance evaluation
-- **Large Infrastructure**: 300+ IP simulation
-- **Custom Agents**: Develop your own agents
-- **Integration**: Connect to external systems
-
-### Community
-- **GitHub Issues**: Report bugs and request features
-- **GitHub Discussions**: Ask questions and share ideas
-- **Contributing**: Submit pull requests and improvements
-
-## 🎉 You're Ready!
-
-You now have:
-- ✅ Working CPS simulation environment
-- ✅ Docker containers with network isolation
-- ✅ Neural multi-agent system (optional)
-- ✅ Suricata security monitoring
-- ✅ Real-time visualization and monitoring
-- ✅ Comprehensive testing and verification
-
-## 🆘 Need Help?
-
-1. **Check the logs**: Look for error messages in terminal output
-2. **Verify prerequisites**: Ensure Docker and Python are properly installed
-3. **Check resources**: Verify sufficient RAM and disk space
-4. **Run tests**: Use the test scripts to verify installation
-5. **Consult documentation**: Read detailed guides and API docs
-6. **Ask the community**: Use GitHub Discussions for help
-
----
-
-**Happy simulating! 🎯**
-
-For more detailed information, see the complete documentation in the repository.
+For migration, runtime validation requirements, and the historical wrapper, see [VERSION_2.md](VERSION_2.md).

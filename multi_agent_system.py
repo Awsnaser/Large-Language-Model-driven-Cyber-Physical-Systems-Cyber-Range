@@ -78,23 +78,34 @@ class MemoryNetwork(nn.Module):
         self.value_net = nn.Linear(feature_dim, feature_dim)
         
     def write(self, features: torch.Tensor, indices: torch.Tensor):
-        """Write features to memory"""
-        self.memory[indices] = features
-        self.memory_valid[indices] = True
-        
+        """Write features to memory without tracking simulator state in autograd."""
+        with torch.no_grad():
+            self.memory[indices] = features.detach().to(self.memory.device)
+            self.memory_valid[indices] = True
+
     def read(self, query: torch.Tensor, k: int = 5) -> torch.Tensor:
-        """Read most similar memories"""
+        """Read nearest memories while preserving the query's batch shape.
+
+        A single query must produce one feature vector, rather than a ``k``
+        element pseudo-batch.  That invariant is important for BatchNorm-based
+        decision networks.
+        """
+        is_single_query = query.dim() == 1
+        query_batch = query.unsqueeze(0) if is_single_query else query
+        if query_batch.dim() != 2:
+            raise ValueError("MemoryNetwork.read expects [feature_dim] or [batch, feature_dim] query")
         if not self.memory_valid.any():
             return torch.zeros_like(query)
-            
+
         valid_memory = self.memory[self.memory_valid]
-        query_expanded = self.query_net(query).unsqueeze(1)
-        
-        similarities = torch.cosine_similarity(query_expanded, valid_memory, dim=-1)
-        _, top_indices = similarities.top(min(k, len(valid_memory)))
-        
-        retrieved = valid_memory[top_indices]
-        return retrieved.mean(dim=0)
+        query_keys = self.query_net(query_batch)
+        similarities = torch.cosine_similarity(
+            query_keys.unsqueeze(1), valid_memory.unsqueeze(0), dim=-1
+        )
+        top_indices = similarities.topk(min(k, valid_memory.size(0)), dim=-1).indices
+        retrieved = valid_memory[top_indices]  # [batch, k, feature_dim]
+        result = retrieved.mean(dim=1)
+        return result.squeeze(0) if is_single_query else result
 
 # Agent Types and Specializations
 class AgentType(Enum):
@@ -132,26 +143,61 @@ class AgentState:
     position: str  # Current zone/location
     knowledge_base: Dict[str, Any] = field(default_factory=dict)
     memory: deque = field(default_factory=lambda: deque(maxlen=1000))
-    neural_state: torch.Tensor = field(default_factory=torch.zeros)
+    neural_state: torch.Tensor = field(default_factory=lambda: torch.zeros(0))
     communication_log: List[Dict[str, Any]] = field(default_factory=list)
     performance_metrics: Dict[str, float] = field(default_factory=dict)
     learning_rate: float = 0.001
     exploration_rate: float = 0.1
 
 class MultiAgentEnvironment:
-    """Enhanced environment for multi-agent simulation"""
-    
-    def __init__(self, base_env, max_agents: int = 20):
+    """Enhanced environment for multi-agent simulation.
+
+    Only architectures with the interfaces used by :class:`NeuralLLMAgent` are
+    accepted here.  Advanced architectures remain independently usable, but
+    are not silently substituted into an incompatible decision/attention/
+    memory slot.
+    """
+
+    _ARCHITECTURE_ALIASES = {
+        "decision_net": {"deep_feedforward", "deep"},
+        "coordination_net": {"attention", "multihead_attention"},
+        "memory_net": {"basic", "memory_network"},
+    }
+
+    def __init__(self, base_env, max_agents: int = 20,
+                 neural_architectures: Optional[Dict[str, str]] = None):
         self.base_env = base_env
         self.max_agents = max_agents
+        self.neural_architectures = self._validate_architectures(neural_architectures)
         self.agents: Dict[str, AgentState] = {}
         self.agent_networks: Dict[str, Dict[str, nn.Module]] = {}
         self.communication_channels: Dict[str, List[str]] = {}
         self.global_memory = torch.zeros(1000, 128)  # Shared memory
         self.round_count = 0
-        
+
         # Initialize communication channels
         self._setup_communication_channels()
+
+    @classmethod
+    def _validate_architectures(cls, requested: Optional[Dict[str, str]]) -> Dict[str, str]:
+        """Normalize supported selections and reject unintegrated architectures."""
+        selections = {
+            "decision_net": "deep_feedforward",
+            "coordination_net": "attention",
+            "memory_net": "basic",
+        }
+        for slot, architecture in (requested or {}).items():
+            if slot not in cls._ARCHITECTURE_ALIASES:
+                raise ValueError(f"Unknown neural architecture slot: {slot}")
+            name = str(architecture).lower()
+            if name not in cls._ARCHITECTURE_ALIASES[slot]:
+                supported = ", ".join(sorted(cls._ARCHITECTURE_ALIASES[slot]))
+                raise NotImplementedError(
+                    f"Architecture '{architecture}' is not wired to the {slot} interface; "
+                    f"supported values are: {supported}."
+                )
+            selections[slot] = name
+        return selections
         
     def _setup_communication_channels(self):
         """Setup secure communication channels between agents"""
@@ -166,8 +212,8 @@ class MultiAgentEnvironment:
         
     def add_agent(self, agent_id: str, agent_type: AgentType, 
                    specialization: AgentSpecialization, position: str) -> bool:
-        """Add a new agent to the environment"""
-        if len(self.agents) >= self.max_agents:
+        """Add a new agent to the environment."""
+        if agent_id in self.agents or len(self.agents) >= self.max_agents:
             return False
             
         # Create agent state
@@ -215,6 +261,10 @@ class MultiAgentEnvironment:
         del self.agents[agent_id]
         del self.agent_networks[agent_id]
         return True
+
+class UnsupportedNeuralActionError(ValueError):
+    """Raised when a neural output cannot be represented as an agent action."""
+
 
 class NeuralLLMAgent:
     """Neural network-enhanced LLM agent"""
@@ -307,19 +357,32 @@ class NeuralLLMAgent:
         combined_features = env_features + memory_context
         combined_features = combined_features.unsqueeze(0)  # Add batch dimension
         
-        # Neural decision making
-        with torch.no_grad():
-            logits, probabilities = self.networks["decision_net"](combined_features)
+        # Neural decision making. BatchNorm/Dropout must use inference behavior for a
+        # single environment state, then the prior training mode is restored.
+        decision_net = self.networks["decision_net"]
+        was_training = decision_net.training
+        decision_net.eval()
+        try:
+            with torch.no_grad():
+                logits, probabilities = decision_net(combined_features)
+        finally:
+            decision_net.train(was_training)
             
-        # Sample action based on neural probabilities
+        # Restrict the fixed-size policy head to actions this role can actually
+        # express in the current state.  Sampling all 32 logits and replacing
+        # unknown indexes with MONITOR used to hide invalid neural output.
+        actions = self._get_available_actions(env_state)
+        if not actions:
+            raise UnsupportedNeuralActionError(
+                f"No executable neural actions are available for {self.state.agent_type.value}"
+            )
+        available_probabilities = probabilities[0, :len(actions)]
         if random.random() < self.state.exploration_rate:
-            # Exploration: random action
-            action_idx = random.randint(0, len(probabilities[0]) - 1)
+            action_idx = random.randrange(len(actions))
         else:
-            # Exploitation: neural-guided action
-            action_idx = torch.argmax(probabilities[0]).item()
-            
-        # Decode action to actual command
+            action_idx = torch.argmax(available_probabilities).item()
+
+        # Decode action to actual command.
         action = self._decode_neural_action(action_idx, env_state)
         
         # Store experience
@@ -333,43 +396,61 @@ class NeuralLLMAgent:
         return action
         
     def _decode_neural_action(self, action_idx: int, env_state: Dict[str, Any]) -> Dict[str, Any]:
-        """Decode neural network output to actual action"""
+        """Decode an in-range neural output to a symbolic action.
+
+        Callers get an explicit error for unsupported output instead of a
+        misleading no-op fallback.
+        """
         actions = self._get_available_actions(env_state)
-        
-        if action_idx < len(actions):
-            return actions[action_idx]
-        else:
-            # Default action if index out of range
-            return {"action": "MONITOR", "target": "NONE", "params": {}}
+        if not isinstance(action_idx, int) or action_idx < 0 or action_idx >= len(actions):
+            raise UnsupportedNeuralActionError(
+                f"Neural action index {action_idx!r} is outside the {len(actions)} available actions"
+            )
+        return actions[action_idx]
             
     def _get_available_actions(self, env_state: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Get list of available actions based on agent type and state"""
-        actions = []
-        
+        """Return symbolic actions that can be adapted for the current state.
+
+        Concrete asset/service selection is intentionally delegated to
+        ``SimulatorActionAdapter`` in ``neural_agent_integration``.
+        """
+        assets = env_state.get("assets", {})
+        compromised = any(asset.get("compromised", False) for asset in assets.values())
+        has_assets = bool(assets)
+        actions: List[Dict[str, Any]] = []
+
         if self.state.agent_type == AgentType.ATTACKER:
-            actions.extend([
-                {"action": "RECON", "target": "ANY", "params": {}},
-                {"action": "EXPLOIT", "target": "COMPROMISED", "params": {}},
-                {"action": "MOVE", "target": "ZONE", "params": {}},
-                {"action": "PERSIST", "target": "COMPROMISED", "params": {}},
-                {"action": "EXFILTRATE", "target": "COMPROMISED", "params": {}}
-            ])
+            actions.append({"action": "RECON", "target": "NONE", "params": {}})
+            if has_assets:
+                actions.append({"action": "EXPLOIT", "target": "ANY", "params": {}})
+            if compromised:
+                actions.extend([
+                    {"action": "MOVE", "target": "COMPROMISED", "params": {}},
+                    {"action": "PERSIST", "target": "COMPROMISED", "params": {}},
+                ])
         elif self.state.agent_type == AgentType.DEFENDER:
-            actions.extend([
-                {"action": "MONITOR", "target": "ANY", "params": {}},
-                {"action": "PATCH", "target": "VULNERABLE", "params": {}},
-                {"action": "ISOLATE", "target": "COMPROMISED", "params": {}},
-                {"action": "RESET", "target": "COMPROMISED", "params": {}},
-                {"action": "HARDEN", "target": "ANY", "params": {}}
-            ])
+            actions.append({"action": "MONITOR", "target": "NONE", "params": {}})
+            if has_assets:
+                actions.extend([
+                    {"action": "PATCH", "target": "VULNERABLE", "params": {}},
+                    {"action": "HARDEN", "target": "ANY", "params": {}},
+                ])
+            if compromised:
+                actions.extend([
+                    {"action": "ISOLATE", "target": "COMPROMISED", "params": {}},
+                    {"action": "RESET", "target": "COMPROMISED", "params": {}},
+                ])
         elif self.state.agent_type == AgentType.ANALYST:
             actions.extend([
                 {"action": "ANALYZE", "target": "ANY", "params": {}},
-                {"action": "ASSESS", "target": "COMPROMISED", "params": {}},
                 {"action": "REPORT", "target": "ANY", "params": {}},
-                {"action": "FORENSIC", "target": "COMPROMISED", "params": {}}
             ])
-            
+            if compromised:
+                actions.extend([
+                    {"action": "ASSESS", "target": "COMPROMISED", "params": {}},
+                    {"action": "FORENSIC", "target": "COMPROMISED", "params": {}},
+                ])
+
         return actions
         
     def update_reward(self, reward: float):
@@ -385,10 +466,9 @@ class NeuralLLMAgent:
         # Sample batch from experience buffer
         batch = random.sample(list(self.experience_buffer), 32)
         
-        states = torch.stack([exp["state"] for exp in batch])
-        actions = torch.tensor([exp["action"] for exp in batch])
-        rewards = torch.tensor([exp["reward"] for exp in batch])
-        
+        states = torch.stack([exp["state"] for exp in batch]).to(self.device)
+        actions = torch.tensor([exp["action"] for exp in batch], device=self.device)
+
         # Forward pass
         logits, _ = self.networks["decision_net"](states)
         
@@ -409,10 +489,17 @@ class NeuralLLMAgent:
 class MultiAgentCoordinator:
     """Coordinates multiple agents and manages their interactions"""
     
-    def __init__(self, environment: MultiAgentEnvironment):
+    def __init__(self, environment: MultiAgentEnvironment, action_adapter: Optional[Any] = None,
+                 coordination_enabled: bool = True):
         self.environment = environment
+        self.action_adapter = action_adapter
+        self.coordination_enabled = bool(coordination_enabled)
         self.agents: Dict[str, NeuralLLMAgent] = {}
         self.coordination_history: List[Dict[str, Any]] = []
+
+    def set_action_adapter(self, action_adapter: Any) -> None:
+        """Set an adapter that converts symbolic actions to a simulator schema."""
+        self.action_adapter = action_adapter
         
     def initialize_agents(self) -> None:
         """Initialize all agents with neural networks"""
@@ -427,6 +514,8 @@ class MultiAgentCoordinator:
         round_results = {
             "round": self.environment.round_count,
             "agent_actions": {},
+            "symbolic_agent_actions": {},
+            "unexecuted_actions": {},
             "communications": {},
             "learning_updates": {},
             "system_state": {}
@@ -435,19 +524,40 @@ class MultiAgentCoordinator:
         # Get current environment state
         env_state = self._encode_environment_state(base_env)
         
-        # Each agent makes decision
+        # Each agent makes a symbolic decision.  RED/BLUE decisions must pass
+        # through an explicit adapter before reaching a simulator.
         for agent_id, agent in self.agents.items():
-            action = agent.make_decision(env_state)
-            round_results["agent_actions"][agent_id] = action
-            
-            # Execute action in base environment
-            if self.environment.agents[agent_id].agent_type in [AgentType.ATTACKER, AgentType.DEFENDER]:
-                actor = "RED" if self.environment.agents[agent_id].agent_type == AgentType.ATTACKER else "BLUE"
+            symbolic_action = agent.make_decision(env_state)
+            agent_state = self.environment.agents[agent_id]
+            round_results["symbolic_agent_actions"][agent_id] = symbolic_action
+
+            if agent_state.agent_type in [AgentType.ATTACKER, AgentType.DEFENDER]:
+                if self.action_adapter is None:
+                    raise RuntimeError(
+                        "No simulator action adapter configured. Use "
+                        "neural_agent_integration.SimulatorActionAdapter before executing RED/BLUE actions."
+                    )
+                action = self.action_adapter.adapt(symbolic_action, agent_state, base_env)
+                actor = "RED" if agent_state.agent_type == AgentType.ATTACKER else "BLUE"
                 result = base_env.execute_action(actor, action)
+                round_results["agent_actions"][agent_id] = action
                 round_results["system_state"][agent_id] = result
+            else:
+                # The primary simulator has RED/BLUE execution only.  Analysts
+                # produce an advisory action, recorded explicitly rather than
+                # pretending it was executed.
+                round_results["agent_actions"][agent_id] = symbolic_action
+                round_results["unexecuted_actions"][agent_id] = (
+                    "ADVISORY_ONLY: primary simulator has no analyst actor"
+                )
                 
-        # Agent communication phase
-        self._handle_agent_communications(round_results)
+        # Agent communication phase is explicitly controlled by the CLI/config.
+        if self.coordination_enabled:
+            self._handle_agent_communications(round_results)
+        else:
+            round_results["communications"] = {
+                channel: [] for channel in self.environment.communication_channels
+            }
         
         # Learning phase
         self._handle_agent_learning(round_results)
@@ -575,11 +685,16 @@ class MultiAgentCoordinator:
         return reward
 
 # Integration with main simulation
-def create_multi_agent_scenario(base_env, num_attackers: int = 3, 
-                               num_defenders: int = 3, num_analysts: int = 2) -> MultiAgentEnvironment:
-    """Create a multi-agent scenario with neural network-enhanced agents"""
-    
-    env = MultiAgentEnvironment(base_env, max_agents=num_attackers + num_defenders + num_analysts)
+def create_multi_agent_scenario(base_env, num_attackers: int = 3,
+                               num_defenders: int = 3, num_analysts: int = 2,
+                               neural_architectures: Optional[Dict[str, str]] = None) -> MultiAgentEnvironment:
+    """Create a multi-agent scenario with neural network-enhanced agents."""
+
+    env = MultiAgentEnvironment(
+        base_env,
+        max_agents=num_attackers + num_defenders + num_analysts,
+        neural_architectures=neural_architectures,
+    )
     
     # Add attacker agents
     attacker_specializations = [

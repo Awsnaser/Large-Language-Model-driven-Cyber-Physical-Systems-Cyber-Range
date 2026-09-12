@@ -1,322 +1,100 @@
-# 🏭 Advanced Cyber-Physical Range Simulator with Multi-Agent Neural Networks
+# LLM CPS Cyber Range — Version 2.0.0
 
-A comprehensive CPS cyber range simulation featuring Docker-based infrastructure, multi-agent LLM systems, neural network decision making, Suricata IDS, and advanced security monitoring.
+A local, symbolic cyber-physical range simulator with a four-asset Docker substrate, red/blue simulation, tank-process modeling, multi-output Gaussian-process risk estimates, optional neural agents, and a browser topology viewer.
 
-> 🛡️ **Safety**: This project is simulation-only. No real exploit code is executed. All activities are contained within isolated Docker environments.
-
-# 🎥 Live Demo Video
-
-Watch a short recording of the interactive **Topology Viewer** in action:
-
-- Network zones (IT / DMZ / OT)  
-- Attack progression (red arrows) & defense responses (green arrows)  
-- Tank level gauge with physical impact visualization  
-- Round-by-round status, red/blue actions, compromised assets, and Gaussian Process risk estimates  
-
-<video src="https://github.com/user-attachments/assets/7bf5fd33-9861-44d3-9d29-77841ae2445d" controls width="800" height="450"></video>
-
-(If the video doesn't play inline, [direct link](https://github.com/user-attachments/assets/7bf5fd33-9861-44d3-9d29-77841ae2445d))
-
-## 🚀 Key Features
-
-### 🐳 **Advanced Docker Infrastructure**
-- **26 Enhanced Containers**: Full CPS environment with honeypots
-- **16 Laptop Containers**: Optimized for resource-constrained systems
-- **Network Segmentation**: IT/OT/DMZ zones with proper isolation
-- **Honeypot Systems**: PLC, OPC UA, Web, DB, SSH, FTP decoys
-- **Security Monitoring**: Suricata IDS, SIEM, packet capture
-
-### 🧠 **Multi-Agent Neural Networks**
-- **Advanced Architectures**: Transformers, GNNs, Memory Networks
-- **Agent Types**: Attackers, Defenders, Analysts, Coordinators
-- **Real-time Learning**: Experience replay and adaptation
-- **Neuroevolution**: Genetic algorithm optimization
-- **Agent Coordination**: Communication and teamwork
-
-### 🔍 **Blue Team Defense**
-- **Suricata IDS**: Real-time intrusion detection
-- **CPS-Specific Rules**: Industrial protocol security
-- **Live Monitoring Dashboard**: Alert analysis and reporting
-- **Threat Intelligence**: Attacker profiling and pattern recognition
-
-### 📊 **Simulation Capabilities**
-- **LLM-vs-LLM Gameplay**: Red vs Blue agent competition
-- **Gaussian Process Modeling**: Multi-output causal inference
-- **Active Intervention**: Safe policy optimization
-- **Benchmark Mode**: Performance evaluation and testing
-- Tank process physics with alarms + damage boundaries
-- Multi-output GP (`delta`, `alarm`, `damage-risk`) with dense risk target
-- Active safe probing policy (uncertainty + confidence-aware safety filter)
-- Prometheus metrics + Grafana dashboard provisioning
-- Benchmark suite with baseline agents and CI-style summary stats
-- Separate figure exports + publication-style storyboard plots
-- Interactive terminal UX (startup status + live round dashboard, optional ANSI colors)
+> **Safety boundary:** actions are simulated. Docker profiles are safe by default, but they are not a guarantee of complete isolation or a production security control. Review Docker access, host networking, ports, mounts, and any optional hardware integration before use.
 
 ## Quick start
 
-```bash
-pip install docker matplotlib ollama faker numpy scikit-learn prometheus-client
-python "python cyberrange_all_in_one.py" --rounds 60
-```
-
-### Interactive terminal UX
+Python 3.10+ is required. This smoke run is simulator-only and does not start Docker services:
 
 ```bash
-python "python cyberrange_all_in_one.py" --interactive-startup --live-round-ui --color-ui
+python -m venv .venv
+source .venv/bin/activate             # Windows: .venv\Scripts\activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python cyberrange.py --no-docker-up --scripted-agents --rounds 20
 ```
 
-- Disable live startup line: `--no-interactive-startup`
-- Disable live round line: `--no-live-round-ui`
-- Disable color: `--no-color-ui`
-
-## Plot modes
+The canonical Version 2 entry point is `python cyberrange.py`. The historical command remains compatible but is only a wrapper:
 
 ```bash
-python "python cyberrange_all_in_one.py" --separate-plots --save-plot outputs/run.png --scenario-count 5
+python "python cyberrange_all_in_one.py" --scripted-agents --rounds 20
 ```
 
-With animations + topology + kill-chain diagnostics saved as separate files:
+Check the installed release with `python cyberrange.py --version`; it reports `2.0.0`.
+
+## Common runs
 
 ```bash
-python "python cyberrange_all_in_one.py" \
-  --rounds 80 \
-  --separate-plots \
-  --save-plot outputs/paper_run.png \
-  --scenario-count 5 \
-  --killchain-plots \
-  --animate --animate-save outputs/paper_run_timeline.gif \
-  --topology-animate --topology-dim 3d --topology-save outputs/paper_run_topology_3d.gif
+# Start the default four-service Docker range.
+python cyberrange.py --scripted-agents --rounds 20
+
+# Use local Ollama-controlled agents instead of scripted agents.
+# Ollama must be running and the selected models must be available.
+python cyberrange.py --rounds 20 --model-red llama3.2:1b --model-blue llama3.2:1b
+
+# Export a viewer-compatible topology file.
+python cyberrange.py --no-docker-up --scripted-agents --rounds 20 \
+  --export-topology-json outputs/topology.json
+
+# Optional Torch-based neural subsystem.
+python -m pip install -r requirements-neural.txt
+python cyberrange.py --no-docker-up --multi-agent \
+  --neural-arch deep_feedforward --rounds 20
 ```
 
-Outputs include:
+`--scripted-agents` is useful for deterministic, Ollama-free validation. The Version 2 CLI supports `deep_feedforward` and `deep` as neural decision architectures. Transformer, GNN, memory, and neuroevolution choices are not integrated CLI alternatives; `--neuroevolution` is explicitly rejected by the simulator loop.
 
-- `*_publication_grid.png`
-- `*_scenario_storyboard.png`
-- `*_safety_vs_intervention.png`
-- `*_residual_diagnostics.png`
-- `*_killchain_red.png`
-- `*_killchain_blue.png`
-- `*_tool_usage.png`
-- optional timeline/topology GIFs when `--animate-save` / `--topology-save` are set
+## Docker and monitoring profiles
 
-Notes:
+| Command | Scope |
+| --- | --- |
+| `python cyberrange.py --rounds 20` | Default four-service range from `docker-compose.yml`. |
+| `python cyberrange.py --enhanced-docker --rounds 20` | Safe enhanced range with four modeled CPS assets, monitoring, and offline IDS validation. |
+| `python cyberrange.py --laptop-docker --rounds 20` | Resource-limited safe range with monitoring and offline Suricata validation. |
+| `python cyberrange.py --compose monitoring/docker-compose-enhanced.yml --rounds 20` | Safe enhanced stack: core range, monitoring, and offline Suricata validation. |
+| `python cyberrange.py --metrics --monitoring-up --rounds 20` | Standard range plus the standalone monitoring Compose stack. |
 
-- When any output path is provided (`--save-plot`, `--animate-save`, `--topology-save`), plots are rendered non-interactively to avoid blocking terminal runs.
-- `--scenario-count` controls storyboard segmentation rows (typically 3–6 for publication layouts).
+Docker runs require a running Docker Engine and the Compose v2 command (`docker compose`). Compose-published management ports bind to loopback (`127.0.0.1`). This does not describe or restrict the host-side Python metrics listener; review its exposure before using `--metrics`.
 
-## Monitoring stack (Grafana + Prometheus)
+Set a Grafana password before starting a monitoring stack:
 
 ```bash
-python "python cyberrange_all_in_one.py" --metrics --metrics-port 8000 --monitoring-up
+export GRAFANA_ADMIN_PASSWORD='use-a-unique-local-password'
 ```
 
-- Grafana: `http://localhost:3000`
-- Prometheus: `http://localhost:9090`
+The configured Grafana user is `admin`; `admin/admin` is not a supported default.
 
-## Benchmark suite
+## Suricata safety model
 
-Default baselines:
+`suricata-ids` is a safe **configuration-validation** job. It uses the shipped `configs/suricata/suricata.yaml` and `custom-cps.rules`, runs Suricata with `-T`, needs no packet-capture capabilities, and exits after validation. It does not automatically capture traffic.
 
-- random red + monitor blue
-- scripted red + monitor blue
-- scripted red + scripted blue
-- scripted red + safety blue
-- scripted red + scripted blue + active probe
-
-Run:
+The only live-capture service is `suricata-live`, excluded from normal startup behind the explicit `dangerous-packet-capture` profile:
 
 ```bash
-python "python cyberrange_all_in_one.py" --benchmark --benchmark-seeds 10 --benchmark-out benchmark_out
+# Isolated lab host only.
+docker compose -f monitoring/docker-compose-enhanced.yml \
+  --profile dangerous-packet-capture up -d
 ```
 
-Config-driven run (matrix override):
+It captures on its Compose bridge interface and requests `NET_ADMIN`/`NET_RAW`; it does not use host networking. See [SURICATA_INTEGRATION.md](SURICATA_INTEGRATION.md) and [VERSION_2.md](VERSION_2.md) before enabling it.
 
-```bash
-python "python cyberrange_all_in_one.py" --benchmark --benchmark-config benchmark/benchmark_config.sample.json
-```
-
-Config schema (`benchmark/benchmark_config.sample.json`):
-
-- `global.seeds` (positive int)
-- `global.rounds` (positive int)
-- `agents[]` entries:
-  - `name` (string)
-  - `red_mode` in `{scripted, random}`
-  - `blue_mode` in `{monitor, scripted, random, safety}`
-  - `active_probe` (bool)
-  - `probe_every` (positive int)
-
-Invalid values are sanitized at load time (e.g., unsupported modes fall back to safe defaults).
-
-Artifacts:
-
-- `benchmark_runs.csv`
-- `benchmark_summary.csv`
-- `benchmark_summary.json`
-
-## Large-scale infrastructure (300+ IPs, 8 subnets)
-
-Generate and visualize a realistic CPS infrastructure with 300+ hosts across 8 subnets spanning IT, DMZ, OT, SCADA, and Cloud zones.
-
-**Static infrastructure map:**
-
-```bash
-python "python cyberrange_all_in_one.py" --large-infra --large-infra-save outputs/infra_map.png
-```
-
-**Animated 2D topology during simulation:**
-
-```bash
-python "python cyberrange_all_in_one.py" --no-docker-up --rounds 60 \
-  --large-infra-animate --large-infra-animate-save outputs/large_topo.gif \
-  --large-infra-save outputs/infra_map.png
-```
-
-**Subnets (8 total):**
-
-| Subnet | Zone | CIDR | Example hosts |
-|---|---|---|---|
-| **Corporate LAN** | IT | 10.1.0.0/24 | 60 workstations, 12 printers, 20 VoIP phones |
-| **IT Server Farm** | IT | 10.1.1.0/24 | 25 servers, 3 domain controllers, 5 databases |
-| **DMZ Public** | DMZ | 172.16.0.0/24 | 15 web servers, 4 gateways, 3 DNS, 2 mail |
-| **DMZ Services** | DMZ | 172.16.1.0/24 | 6 historians, 3 jumpboxes, 4 proxies |
-| **OT Control Net** | OT | 192.168.10.0/24 | 8 HMIs, 5 eng workstations, 20 PLCs, 15 RTUs |
-| **OT Field Bus** | OT | 192.168.11.0/24 | 40 sensors, 25 actuators, 10 IEDs |
-| **SCADA Network** | OT | 192.168.20.0/24 | 4 SCADA servers, 3 historians, 2 alarm servers |
-| **Cloud/Mgmt** | IT | 10.200.0.0/24 | 2 cloud gateways, 2 SIEMs, 3 NMS, 2 VPN concentrators |
-
-**Animation features:**
-
-- Subnet bounding boxes with CIDR labels
-- Inter-subnet routing links
-- Per-asset markers sized by criticality (HIGH/MEDIUM/LOW)
-- Animated attacker movement with red attack arrows
-- Blue defender arrows
-- Compromise propagation (red highlighting)
-- IP labels on high-criticality assets
-- Live status bar (round, actions, tank level, compromised count)
-
-## Scripted agents (improved simulation results)
-
-The default LLM agents often produce poor results (P_safe=1.0 flat, GP never learns, red gets stuck). Use `--scripted-agents` to replace them with well-designed kill-chain RED + reactive BLUE agents:
-
-```bash
-python "python cyberrange_all_in_one.py" --no-docker-up --rounds 100 --scripted-agents --active-probe
-```
-
-**What `--scripted-agents` fixes:**
-
-- **Kill-chain RED agent**: deterministic IT→DMZ→OT→PLC IMPACT progression with COVER evasion
-- **Reactive BLUE agent**: MONITOR → PATCH → ISOLATE → RESTORE based on threat level
-- **Passive compromise effects**: compromised OT assets cause sensor drift, pump perturbation, physical degradation even without explicit IMPACT
-- **GP probing**: early non-trivial interventional probes (N_int > 0) for real GP learning
-- **HMI/PLC services exposed**: red agent can actually reach OT assets from DMZ
-
-**Expected result improvements:**
-
-| Metric | Before (LLM agents) | After (scripted) |
-|---|---|---|
-| P_safe | Flat 1.0 | Drops to 0.3–0.6 under attack |
-| GP P(alarm) | Stuck at 0.50 | Rises to 0.7–0.9 |
-| GP P(damage) | Stuck at 0.00 | Rises to 0.3–0.6 |
-| Compromised count | Saturates at 2 | Oscillates 1–4 with restore cycles |
-| N_int (interventional) | 0 forever | 15–30 probes |
-| Tank level | Flat ~50% | Wild oscillations 20–85% |
-
-## React topology viewer
-
-Interactive browser-based topology animation viewer with playback controls, status panels, and tank gauge.
-
-**Quick start:**
+## Topology viewer
 
 ```bash
 cd topology-viewer
 npm install
-npm start
+npm run dev
 ```
 
-Then open `http://localhost:3000` in your browser. The viewer loads with demo data automatically.
+Open the Vite URL and use **Load JSON** to select a file produced by `--export-topology-json`. Build checks are `npm run typecheck`, `npm test`, and `npm run build`.
 
-**Export simulation data for the viewer:**
+## Optional integrations and validation
 
-```bash
-python "python cyberrange_all_in_one.py" --no-docker-up --rounds 100 --scripted-agents \
-  --export-topology-json outputs/topology_data.json
-```
+- `--pcap PATH` exports simulated traffic and requires `scapy`; it does not turn on live capture.
+- `--real-modbus` requires `pymodbus` and can read/write the target. Non-loopback endpoints are refused unless `--allow-external-modbus` explicitly acknowledges the risk. Use only a reviewed lab or simulator endpoint.
+- Before a Compose run, use `docker compose -f <file> config -q` and verify Docker with `docker info`.
+- A successful Suricata `-T` job validates configuration syntax; it is not evidence of live detection.
 
-Then load `outputs/topology_data.json` via the "Load JSON" button in the viewer.
-
-**Features:**
-
-- Canvas-based 2D topology with subnet bounding boxes and CIDR labels
-- Animated attacker movement with red attack arrows
-- Blue defender arrows
-- Compromise propagation (red glow on compromised assets)
-- IP labels on high-criticality assets
-- Playback controls (play/pause/stop/seek/FPS)
-- Real-time status panels (round info, red/blue actions, GP predictions)
-- Tank level gauge with safe-band markers
-- Compromised asset tracker
-
-## Scenario comparison (attack variants + GP ablation)
-
-Generate a publication-quality 2×3 overlay figure comparing 4 attack scenarios and 3 GP ablation variants, averaged over multiple seeds:
-
-```bash
-python "python cyberrange_all_in_one.py" --scenario-compare --compare-seeds 5 --rounds 100 --compare-save outputs/comparison.png
-```
-
-**Row 1 — Attack scenario comparison** (all with GP + active probe):
-
-- **Baseline (scripted)** — standard scripted red vs scripted blue
-- **Aggressive attack** — fast exploitation, immediate IMPACT on PLC once compromised
-- **Stealthy attack** — passive RECON/COVER until round 30, then slow methodical progression
-- **No GP defense** — scripted red vs monitor-only blue, GP disabled entirely
-
-**Row 2 — GP ablation study** (all with scripted red vs scripted blue):
-
-- **GP + active probe (ours)** — full method with info-gain-based safe probing
-- **GP + random probe** — GP enabled but probes are randomly selected (no info-gain)
-- **GP passive (no probe)** — GP learns from observational data only, no interventional probes
-
-Each panel shows mean ± std shading across seeds. Panels cover: empirical safety P(safe), alert accumulation, GP damage-risk prediction, intervention load, and compromised asset count.
-
-## Real Modbus/PLC bridge mode
-
-```bash
-pip install pymodbus
-python "python cyberrange_all_in_one.py" --real-modbus --modbus-host 127.0.0.1 --modbus-port 1502 --modbus-unit 1
-```
-
-Read external commands from holding registers:
-
-- `201`: pump command (`0=AUTO, 1=FORCE_ON, 2=FORCE_OFF`)
-- `202`: valve command (`0=AUTO, 1=FORCE_OPEN, 2=FORCE_CLOSED`)
-
-Write simulator state to holding registers:
-
-- `100`: tank level ×10 (uint16)
-- `101`: current pump command code
-- `102`: current valve command code
-- `103`: sensor status (`0/1`)
-- `104`: safety interlock (`0/1`)
-- `105`: alarm flag (`0/1`)
-- `106`: damage flag (`0/1`)
-
-The bridge supports both pymodbus calling conventions (`slave=` and `unit=`) for compatibility across versions.
-
-Reference register profile:
-
-- `modbus/register_profile.sample.json`
-
-## Testing
-
-Regression tests (dense risk, active policy safety, benchmark schema, Modbus mappings):
-
-```bash
-pytest -q
-```
-
-Test file:
-
-- `tests/test_cyberrange_regressions.py`
+See [QUICK_START.md](QUICK_START.md) for a short workflow, [SETUP.md](SETUP.md) for prerequisites, and [VERSION_2.md](VERSION_2.md) for migration and the full upgrade checklist.

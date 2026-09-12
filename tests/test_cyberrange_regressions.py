@@ -24,7 +24,7 @@ def _inject_optional_stubs():
 
 def _load_module():
     _inject_optional_stubs()
-    module_path = Path(__file__).resolve().parents[1] / "python cyberrange_all_in_one.py"
+    module_path = Path(__file__).resolve().parents[1] / "cyberrange.py"
     spec = importlib.util.spec_from_file_location("cyberrange_all_in_one", str(module_path))
     module = importlib.util.module_from_spec(spec)
     assert spec is not None and spec.loader is not None

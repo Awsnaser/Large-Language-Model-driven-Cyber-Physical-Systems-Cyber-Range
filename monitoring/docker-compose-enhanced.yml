@@ -1,247 +1,147 @@
-version: '3.8'
-
+# Enhanced CPS range, safe by default. Run from the repository root with:
+# docker compose -f monitoring/docker-compose-enhanced.yml up -d
+#
+# The normal service set never uses host networking, privileged containers, or
+# NET_ADMIN/NET_RAW. Suricata's normal service validates the shipped IDS
+# configuration without opening a capture socket. Use the explicitly named
+# dangerous-packet-capture profile only on an isolated lab host when live packet
+# capture is required:
+# docker compose -f monitoring/docker-compose-enhanced.yml --profile dangerous-packet-capture up -d
 services:
-  # Existing services...
-  grafana:
-    image: grafana/grafana:latest
+  gw_dmz_01:
+    container_name: gw_dmz_01
+    image: alpine:3.20
+    command: ["sh", "-c", "apk add --no-cache openssh busybox-extras && ssh-keygen -A && adduser -D -s /bin/sh trainee && echo 'trainee:trainee' | chpasswd && /usr/sbin/sshd -D -e"]
+    networks:
+      dmz_net:
+        aliases: ["gw_dmz_01"]
     ports:
-      - "3000:3000"
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - "127.0.0.1:2222:22"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 22 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 8
+    read_only: true
+    tmpfs: [/run, /tmp]
+    restart: unless-stopped
+
+  hist_data_01:
+    container_name: hist_data_01
+    image: nginx:1.27-alpine
+    networks:
+      dmz_net:
+        aliases: ["hist_data_01"]
+    ports:
+      - "127.0.0.1:8080:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:80 >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 8
+    read_only: true
+    tmpfs: [/var/cache/nginx, /var/run, /tmp]
+    restart: unless-stopped
+
+  hmi_ops_01:
+    container_name: hmi_ops_01
+    image: alpine:3.20
+    command: ["sh", "-c", "apk add --no-cache busybox-extras && sleep infinity"]
+    networks:
+      ot_net:
+        aliases: ["hmi_ops_01"]
+    healthcheck:
+      test: ["CMD-SHELL", "ps | grep -q sleep || exit 1"]
+      interval: 20s
+      timeout: 3s
+      retries: 5
+    read_only: true
+    tmpfs: [/tmp]
+    restart: unless-stopped
+
+  plc_industrial_01:
+    container_name: plc_industrial_01
+    image: alpine:3.20
+    command: ["sh", "-c", "mkdir -p /plc && echo 'SAFE_v2' > /plc/logic_hash && sleep infinity"]
+    networks:
+      ot_net:
+        aliases: ["plc_industrial_01"]
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /plc/logic_hash || exit 1"]
+      interval: 20s
+      timeout: 3s
+      retries: 5
     volumes:
-      - grafana_data:/var/lib/grafana
-      - ./monitoring/grafana:/etc/grafana/provisioning
+      - plc_state:/plc
+    restart: unless-stopped
 
   prometheus:
-    image: prom/prometheus:latest
+    container_name: cps_prometheus
+    image: prom/prometheus:v2.54.1
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus"]
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.console.libraries=/etc/prometheus/console_libraries'
-      - '--web.console.templates=/etc/prometheus/consoles'
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks: [monitoring_net]
+    restart: unless-stopped
 
-  # Enhanced Network Infrastructure
-  
-  # Open vSwitch for realistic switching
-  openswitch:
-    image: openswitch/openswitch:latest
-    privileged: true
-    hostname: ovs-switch
-    networks:
-      - cps_network
-    volumes:
-      - ./configs/ovs:/etc/openvswitch
-      - ovs_db:/var/lib/openvswitch
-    command: >
-      bash -c "
-      ovsdb-server --remote=punix:/var/run/openvswitch/db.sock &
-      ovs-vswitchd --pidfile=/var/run/openvswitch/ovs-vswitchd.pid &
-      sleep infinity
-      "
-
-  # SNMP Traffic Generator
-  snmp-simulator:
-    image: tandrup/snmpsim:latest
-    hostname: snmp-sim
-    networks:
-      - cps_network
+  grafana:
+    container_name: cps_grafana
+    image: grafana/grafana:11.2.0
+    depends_on: [prometheus]
     ports:
-      - "161:161/udp"
-      - "162:162/udp"
+      - "127.0.0.1:3000:3000"
     environment:
-      - SNMP_COMMUNITY=public
-      - SNMP_COMMUNITY_RO=public
-      - SNMP_COMMUNITY_RW=private
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-change-me-before-sharing}
+      GF_USERS_ALLOW_SIGN_UP: "false"
     volumes:
-      - ./monitoring/snmp_data:/data
-    command: >
-      sh -c "
-      snmpsimd --data-dir=/data --agent-udpv4-endpoint=0.0.0.0:161 \
-              --trap-udpv4-endpoint=0.0.0.0:162 --verbose
-      "
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    networks: [monitoring_net]
+    restart: unless-stopped
 
-  # Modbus TCP Server (Industrial Protocol)
-  modbus-server:
-    image: oitc/modbus-server:latest
-    hostname: modbus-server
-    networks:
-      - cps_network
-    ports:
-      - "502:502"
-    environment:
-      - MODBUS_DEBUG=true
-      - MODBUS_REGISTER_COUNT=100
+  # Safe default: verify the exact shipped configuration and CPS rules. This
+  # performs no packet capture and therefore needs no Linux capabilities.
+  suricata-ids:
+    container_name: cps_suricata_ids
+    image: jasonish/suricata:7.0.11
+    command: ["-T", "-c", "/etc/suricata/suricata.yaml"]
     volumes:
-      - ./monitoring/modbus_config:/config
+      - ../configs/suricata:/etc/suricata:ro
+      - ../configs/suricata/logs:/var/log/suricata
+    networks: [monitoring_net]
+    restart: "no"
 
-  # OPC UA Server (Industrial Communication)
-  opcua-server:
-    image: open62541/open62541:latest
-    hostname: opcua-server
-    networks:
-      - cps_network
-    ports:
-      - "4840:4840"
-    environment:
-      - SERVER_ENDPOINT=opc.tcp://0.0.0.0:4840
-      - SERVER_NAME=CPS_OPCUA_Server
+  # Opt-in live capture only. It is deliberately excluded from `compose up`,
+  # does not use host networking or privileged mode, and is restricted to this
+  # Compose project's bridge networks. Run only on an isolated lab host.
+  suricata-live:
+    container_name: cps_suricata_live
+    profiles: ["dangerous-packet-capture"]
+    image: jasonish/suricata:7.0.11
+    command: ["-c", "/etc/suricata/suricata.yaml", "-i", "eth0"]
+    cap_add: [NET_ADMIN, NET_RAW, SYS_NICE]
     volumes:
-      - ./monitoring/opcua_config:/config
-
-  # Network Traffic Generator
-  traffic-gen:
-    image: alpine:latest
-    hostname: traffic-gen
-    networks:
-      - cps_network
-    cap_add:
-      - NET_ADMIN
-    command: >
-      sh -c "
-      apk add --no-cache hping3 nmap tcpdump iperf3 netcat-openbsd
-      while true; do
-        # Generate web traffic
-        hping3 -S -p 80 -i u1 web-server 2>/dev/null &
-        hping3 -S -p 443 -i u1 web-server 2>/dev/null &
-        
-        # Generate industrial protocol traffic
-        nc -zv modbus-server 502 2>/dev/null &
-        nc -zv opcua-server 4840 2>/dev/null &
-        
-        # Generate network discovery traffic
-        nmap -sS -p 22,80,443,502,4840,161 gateway 2>/dev/null &
-        
-        # Generate bandwidth testing
-        iperf3 -c prometheus -t 5 2>/dev/null &
-        
-        sleep 60
-      done
-      "
-
-  # Syslog Server
-  syslog-server:
-    image: balabit/syslog-ng:latest
-    hostname: syslog-server
-    networks:
-      - cps_network
-    ports:
-      - "514:514/udp"
-      - "601:601/tcp"
-    volumes:
-      - syslog_logs:/var/log/syslog-ng
-      - ./monitoring/syslog.conf:/etc/syslog-ng/syslog-ng.conf
-
-  # NTP Server for Time Sync
-  ntp-server:
-    image: cturra/ntp:latest
-    hostname: ntp-server
-    networks:
-      - cps_network
-    ports:
-      - "123:123/udp"
-    environment:
-      - NTP_SERVERS=pool.ntp.org
-      - NTP_LOG_LEVEL=3
-
-  # DHCP Server
-  dhcp-server:
-    image: networkboot/dhcpd:latest
-    hostname: dhcp-server
-    networks:
-      - cps_network
-    ports:
-      - "67:67/udp"
-    volumes:
-      - ./monitoring/dhcpd.conf:/etc/dhcp/dhcpd.conf
-      - dhcp_leases:/var/lib/dhcp
-    command: >
-      sh -c "
-      ip addr add 192.168.100.1/24 dev eth0
-      dhcpd -4 -cf /etc/dhcp/dhcpd.conf eth0
-      "
-
-  # DNS Server
-  dns-server:
-    image: bind9:latest
-    hostname: dns-server
-    networks:
-      - cps_network
-    ports:
-      - "53:53/udp"
-      - "53:53/tcp"
-    volumes:
-      - ./monitoring/bind_config:/etc/bind
-      - dns_logs:/var/log/named
-
-  # Web Server (Target for traffic)
-  web-server:
-    image: nginx:alpine
-    hostname: web-server
-    networks:
-      - cps_network
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./monitoring/nginx.conf:/etc/nginx/nginx.conf
-      - web_logs:/var/log/nginx
-
-  # Database Server
-  database-server:
-    image: postgres:13
-    hostname: database-server
-    networks:
-      - cps_network
-    ports:
-      - "5432:5432"
-    environment:
-      - POSTGRES_DB=cps_data
-      - POSTGRES_USER=cps_user
-      - POSTGRES_PASSWORD=cps_pass
-    volumes:
-      - db_data:/var/lib/postgresql/data
-      - db_logs:/var/log/postgresql
-
-  # Packet Capture Service
-  packet-capture:
-    image: alpine:latest
-    hostname: packet-capture
-    network_mode: host
-    cap_add:
-      - NET_ADMIN
-      - NET_RAW
-    volumes:
-      - ./pcaps:/pcaps
-    command: >
-      sh -c "
-      apk add --no-cache tcpdump
-      while true; do
-        tcpdump -i any -w /pcaps/capture_$(date +%Y%m%d_%H%M%S).pcap -C 100 -W 10 &
-        sleep 3600
-        killall tcpdump
-      done
-      "
+      - ../configs/suricata:/etc/suricata:ro
+      - ../configs/suricata/logs:/var/log/suricata
+    networks: [monitoring_net]
+    restart: unless-stopped
 
 networks:
-  cps_network:
+  dmz_net:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 192.168.100.0/24
-          gateway: 192.168.100.1
+  ot_net:
+    driver: bridge
+  monitoring_net:
+    driver: bridge
 
 volumes:
-  grafana_data:
+  plc_state:
   prometheus_data:
-  ovs_db:
-  syslog_logs:
-  dhcp_leases:
-  dns_logs:
-  web_logs:
-  db_data:
-  db_logs:
+  grafana_data:

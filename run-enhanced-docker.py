@@ -1,85 +1,57 @@
 #!/usr/bin/env python3
-"""
-Run Enhanced Docker Simulation with All Containers
-"""
+"""Show or launch the supported Version 2 Docker profiles."""
+
+from __future__ import annotations
 
 import subprocess
 import sys
-import os
+from pathlib import Path
 
-def main():
-    print("Enhanced Docker CPS Simulation Runner")
-    print("=" * 40)
-    
-    # Check if docker-compose files exist
-    required_files = [
-        "monitoring/docker-compose-closed.yml",
-        "monitoring/laptop-optimization.yml"
-    ]
-    
-    print("Checking required files...")
-    for file_path in required_files:
-        if os.path.exists(file_path):
-            print(f"  ✓ {file_path}")
-        else:
-            print(f"  ✗ {file_path} - MISSING!")
-            return False
-    
-    print("\nAvailable Docker Options:")
-    print("1. Standard (4 containers)")
-    print("2. Enhanced with Honeypots (23 containers)")
-    print("3. Laptop-Optimized (15 containers)")
-    
-    print("\nRecommended Commands:")
-    print("\n1. Enhanced Setup with Honeypots:")
-    print("   python \"python cyberrange_all_in_one.py\" --enhanced-docker --scripted-agents --rounds 20")
-    
-    print("\n2. Laptop-Optimized Setup:")
-    print("   python \"python cyberrange_all_in_one.py\" --laptop-docker --scripted-agents --rounds 20")
-    
-    print("\n3. Neural Multi-Agent Enhanced Setup:")
-    print("   python \"python cyberrange_all_in_one.py\" --enhanced-docker --multi-agent --scripted-agents --rounds 20")
-    
-    print("\n4. Full Neural Setup with All Features:")
-    print("   python \"python cyberrange_all_in_one.py\" \\")
-    print("     --enhanced-docker \\")
-    print("     --multi-agent \\")
-    print("     --num-attackers 4 \\")
-    print("     --num-defenders 4 \\")
-    print("     --num-analysts 2 \\")
-    print("     --neural-arch transformer \\")
-    print("     --agent-coordination \\")
-    print("     --neural-training \\")
-    print("     --scripted-agents \\")
-    print("     --rounds 50")
-    
-    # Ask user if they want to run a test
+PROFILES = {
+    "1": ("Closed four-service range", "monitoring/docker-compose-closed.yml"),
+    "2": ("Enhanced range with monitoring and offline IDS validation", "monitoring/docker-compose-enhanced.yml"),
+    "3": ("Laptop-friendly monitored range", "monitoring/laptop-optimization.yml"),
+}
+
+
+def main() -> int:
+    print("CPS Cyber Range Version 2 Docker Runner")
+    print("=" * 42)
+
+    missing = [path for _, path in PROFILES.values() if not Path(path).is_file()]
+    if missing:
+        for path in missing:
+            print(f"Missing required file: {path}", file=sys.stderr)
+        return 1
+
+    for key, (label, path) in PROFILES.items():
+        print(f"{key}. {label}\n   {path}")
+
+    print("\nCanonical simulator example:")
+    print("  python cyberrange.py --compose monitoring/docker-compose-enhanced.yml --scripted-agents --rounds 20")
+    print("\nLive packet capture is intentionally excluded. See monitoring/security-controls.md before enabling it.")
+
     try:
-        choice = input("\nRun enhanced docker test? (y/n): ").lower().strip()
-        if choice == 'y':
-            print("\nStarting Enhanced Docker Test...")
-            cmd = [
-                sys.executable, 
-                "python cyberrange_all_in_one.py",
-                "--enhanced-docker",
-                "--scripted-agents", 
-                "--rounds", "5"
-            ]
-            
-            print(f"Running: {' '.join(cmd)}")
-            result = subprocess.run(cmd)
-            
-            if result.returncode == 0:
-                print("\n✅ Enhanced docker test completed successfully!")
-            else:
-                print(f"\n❌ Test failed with exit code: {result.returncode}")
-                
-    except KeyboardInterrupt:
-        print("\nTest cancelled by user")
-    except Exception as e:
-        print(f"\nError running test: {e}")
-    
-    return True
+        choice = input("\nStart a profile now (1-3, or Enter to exit)? ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return 0
+
+    if not choice:
+        return 0
+    if choice not in PROFILES:
+        print("Invalid selection.", file=sys.stderr)
+        return 2
+
+    _, compose_path = PROFILES[choice]
+    command = ["docker", "compose", "-f", compose_path, "up", "-d"]
+    print("Running:", " ".join(command))
+    try:
+        return subprocess.run(command, check=False).returncode
+    except FileNotFoundError:
+        print("Docker CLI not found. Install Docker with the Compose plugin.", file=sys.stderr)
+        return 127
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

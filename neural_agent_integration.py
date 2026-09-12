@@ -9,8 +9,141 @@ import numpy as np
 from typing import Dict, List, Any, Optional
 from multi_agent_system import (
     MultiAgentEnvironment, MultiAgentCoordinator, create_multi_agent_scenario,
-    AgentType, AgentSpecialization
+    AgentState, AgentType, AgentSpecialization
 )
+
+
+class UnsupportedSimulatorActionError(ValueError):
+    """A neural symbolic action has no valid representation in the simulator."""
+
+
+class SimulatorActionAdapter:
+    """Convert neural symbolic actions into the primary simulator action schema.
+
+    The primary CPS simulator consumes ``action``, ``target``, ``service`` and
+    ``params`` fields, with real asset and service identifiers.  Neural agents
+    intentionally emit role-level symbols (for example ``COMPROMISED`` or
+    ``VULNERABLE``); this adapter is the single boundary that resolves those
+    symbols and maps action names.  It raises rather than emitting an unknown
+    command or a fabricated target.
+    """
+
+    _ACTION_MAP = {
+        AgentType.ATTACKER: {
+            "RECON": "RECON",
+            "EXPLOIT": "EXPLOIT",
+            "MOVE": "PIVOT",
+            "PERSIST": "EXECUTE",
+        },
+        AgentType.DEFENDER: {
+            "MONITOR": "MONITOR",
+            "PATCH": "PATCH",
+            "ISOLATE": "ISOLATE",
+            "RESET": "RESTORE",
+            "HARDEN": "HARDEN",
+        },
+    }
+    _TARGETLESS_ACTIONS = {"RECON", "MONITOR"}
+
+    @staticmethod
+    def _field(obj: Any, name: str, default: Any = None) -> Any:
+        return obj.get(name, default) if isinstance(obj, dict) else getattr(obj, name, default)
+
+    def _assets(self, base_env: Any) -> Dict[str, Any]:
+        assets = getattr(base_env, "assets", None)
+        if not isinstance(assets, dict):
+            raise UnsupportedSimulatorActionError(
+                "Base environment must expose an assets dictionary for neural action adaptation"
+            )
+        return assets
+
+    def _select_asset(self, base_env: Any, target_symbol: Any, *,
+                      require_compromised: bool = False,
+                      require_vulnerable: bool = False,
+                      require_exploitable_service: bool = False) -> tuple[str, Any]:
+        assets = self._assets(base_env)
+        symbol = str(target_symbol or "NONE")
+        if symbol in assets:
+            candidates = [(symbol, assets[symbol])]
+        elif symbol in {"ANY", "VULNERABLE", "COMPROMISED"}:
+            candidates = sorted(assets.items())
+        else:
+            raise UnsupportedSimulatorActionError(f"Unsupported neural target symbol: {symbol}")
+
+        for asset_id, asset in candidates:
+            if self._field(asset, "isolated", False):
+                continue
+            if require_compromised and not self._field(asset, "compromised", False):
+                continue
+            if require_vulnerable and not self._has_unpatched_service(asset):
+                continue
+            if require_exploitable_service:
+                try:
+                    self._select_service(asset, require_vulnerability=True)
+                except UnsupportedSimulatorActionError:
+                    continue
+            return asset_id, asset
+        condition = (
+            "compromised" if require_compromised else
+            "vulnerable" if require_vulnerable else
+            "exploitable" if require_exploitable_service else "usable"
+        )
+        raise UnsupportedSimulatorActionError(f"No {condition} asset is available for target {symbol}")
+
+    def _has_unpatched_service(self, asset: Any) -> bool:
+        services = self._field(asset, "services", {}) or {}
+        return any(not self._field(service, "patched", False) for service in services.values())
+
+    def _select_service(self, asset: Any, *, require_vulnerability: bool = False) -> str:
+        services = self._field(asset, "services", {}) or {}
+        for service_name in sorted(services):
+            service = services[service_name]
+            if self._field(service, "patched", False) or not self._field(service, "exposed", False):
+                continue
+            if require_vulnerability and self._field(service, "vuln_id", None) is None:
+                continue
+            return service_name
+        raise UnsupportedSimulatorActionError("No exposed, unpatched compatible service is available")
+
+    def adapt(self, symbolic_action: Dict[str, Any], agent_state: AgentState,
+              base_env: Any) -> Dict[str, Any]:
+        """Return a concrete primary-simulator action or raise a clear error."""
+        if not isinstance(symbolic_action, dict):
+            raise UnsupportedSimulatorActionError("Neural action must be a dictionary")
+        action_name = str(symbolic_action.get("action", "")).upper()
+        mappings = self._ACTION_MAP.get(agent_state.agent_type)
+        if mappings is None or action_name not in mappings:
+            raise UnsupportedSimulatorActionError(
+                f"{agent_state.agent_type.value} action '{action_name}' has no primary-simulator mapping"
+            )
+
+        simulator_action = mappings[action_name]
+        params = symbolic_action.get("params", {}) or {}
+        if not isinstance(params, dict):
+            raise UnsupportedSimulatorActionError("Neural action params must be a dictionary")
+        if simulator_action in self._TARGETLESS_ACTIONS:
+            return {"action": simulator_action, "target": "NONE", "service": "NONE", "params": params}
+
+        target_symbol = symbolic_action.get("target", "ANY")
+        needs_compromised = simulator_action in {"PIVOT", "EXECUTE", "ISOLATE", "RESTORE"}
+        needs_vulnerable = simulator_action == "PATCH"
+        target, asset = self._select_asset(
+            base_env, target_symbol,
+            require_compromised=needs_compromised,
+            require_vulnerable=needs_vulnerable,
+        )
+        service = "NONE"
+        if simulator_action == "EXPLOIT":
+            # EXPLOIT requires a concrete exposed service with a modeled vuln.
+            target, asset = self._select_asset(
+                base_env, target_symbol, require_exploitable_service=True
+            )
+            service = self._select_service(asset, require_vulnerability=True)
+        elif simulator_action == "PATCH":
+            # A targeted service makes the action deterministic and portable.
+            service = self._select_service(asset)
+        return {"action": simulator_action, "target": target, "service": service, "params": params}
+
 
 class NeuralEnhancedSimulation:
     """Enhanced CPS simulation with neural multi-agent system"""
@@ -18,16 +151,24 @@ class NeuralEnhancedSimulation:
     def __init__(self, base_env, config: Dict[str, Any]):
         self.base_env = base_env
         self.config = config
+        self.training_enabled = bool(config.get("neural_training", False))
+        self.coordination_enabled = bool(config.get("agent_coordination", False))
         
         # Multi-agent system
         self.multi_agent_env = create_multi_agent_scenario(
             base_env,
             num_attackers=config.get("num_attackers", 3),
             num_defenders=config.get("num_defenders", 3),
-            num_analysts=config.get("num_analysts", 2)
+            num_analysts=config.get("num_analysts", 2),
+            neural_architectures=config.get("neural_architectures"),
         )
-        
-        self.coordinator = MultiAgentCoordinator(self.multi_agent_env)
+
+        # This is the explicit integration boundary for the primary simulator.
+        self.coordinator = MultiAgentCoordinator(
+            self.multi_agent_env,
+            action_adapter=SimulatorActionAdapter(),
+            coordination_enabled=self.coordination_enabled,
+        )
         self.coordinator.initialize_agents()
         
         # Neural network training configuration
@@ -73,7 +214,7 @@ class NeuralEnhancedSimulation:
             self._collect_round_metrics(round_results, simulation_results)
             
             # Periodic neural network training
-            if round_num % 10 == 0:
+            if self.training_enabled and round_num % 10 == 0:
                 self._train_neural_networks()
                 
             # Update environment physics
@@ -380,10 +521,13 @@ NEURAL_SIMULATION_CONFIG = {
     "num_attackers": 3,
     "num_defenders": 3,
     "num_analysts": 2,
+    # Only choices wired to NeuralLLMAgent's decision/attention/memory
+    # interfaces are accepted.  Unsupported advanced architectures fail at
+    # construction instead of being silently ignored.
     "neural_architectures": {
         "decision_net": "deep_feedforward",
-        "coordination_net": "transformer",
-        "memory_net": "memory_augmented"
+        "coordination_net": "attention",
+        "memory_net": "basic"
     },
     "training_params": {
         "learning_rate": 0.001,

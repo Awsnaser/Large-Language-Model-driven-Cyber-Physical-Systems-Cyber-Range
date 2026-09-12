@@ -10,6 +10,7 @@ import torch.nn.functional as F
 import numpy as np
 from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass
+import copy
 import math
 
 # === TRANSFORMER-BASED MULTI-AGENT REASONING ===
@@ -17,13 +18,14 @@ import math
 class MultiAgentTransformer(nn.Module):
     """Transformer architecture for multi-agent coordination and reasoning"""
     
-    def __init__(self, agent_dim: int, embed_dim: int = 256, num_heads: int = 8, 
-                 num_layers: int = 6, max_agents: int = 20):
+    def __init__(self, agent_dim: int, embed_dim: int = 256, num_heads: int = 8,
+                 num_layers: int = 6, max_agents: int = 20, num_actions: int = 32):
         super().__init__()
         
         self.agent_dim = agent_dim
         self.embed_dim = embed_dim
         self.max_agents = max_agents
+        self.num_actions = num_actions
         
         # Agent embedding layer
         self.agent_embedding = nn.Linear(agent_dim, embed_dim)
@@ -50,7 +52,7 @@ class MultiAgentTransformer(nn.Module):
         
         # Output heads for different tasks
         self.coordination_head = nn.Linear(embed_dim, embed_dim)
-        self.decision_head = nn.Linear(embed_dim, 32)  # Action space
+        self.decision_head = nn.Linear(embed_dim, num_actions)
         self.value_head = nn.Linear(embed_dim, 1)  # State value
         
     def forward(self, agent_states: torch.Tensor, 
@@ -243,12 +245,12 @@ class DifferentiableMemory(nn.Module):
         self.feature_dim = feature_dim
         self.key_dim = key_dim
         
-        # Memory banks
-        self.key_memory = nn.Parameter(torch.randn(memory_size, key_dim))
-        self.value_memory = nn.Parameter(torch.randn(memory_size, feature_dim))
-        
-        # Usage tracking
-        self.usage = nn.Parameter(torch.zeros(memory_size), requires_grad=False)
+        # Mutable simulator state belongs in buffers, not Parameters.  Buffers
+        # follow the module across devices and checkpoints without being
+        # replaced during forward(), which would invalidate an optimizer.
+        self.register_buffer('key_memory', torch.randn(memory_size, key_dim))
+        self.register_buffer('value_memory', torch.randn(memory_size, feature_dim))
+        self.register_buffer('usage', torch.zeros(memory_size))
         
         # Networks for key/value generation
         self.key_network = nn.Linear(feature_dim, key_dim)
@@ -277,27 +279,28 @@ class DifferentiableMemory(nn.Module):
         memory_values = self.value_memory.unsqueeze(0).expand(batch_size, -1, -1)
         read_data = torch.bmm(attention_weights.unsqueeze(1), memory_values).squeeze(1)
         
-        # Write to memory (if provided)
+        # Write to memory (if provided).  This is stateful storage, not a
+        # differentiable parameter update.  Do the in-place buffer update under
+        # no_grad so a forward pass never reassigns a Parameter or corrupts an
+        # optimizer's parameter references.
         if write_data is not None:
+            if write_data.shape != query.shape:
+                raise ValueError("write_data must have the same [batch, feature_dim] shape as query")
             write_key = self.key_network(write_data)
             write_value = self.value_network(write_data)
-            
-            # Find least used memory slots
+
             usage_scores = self.usage.unsqueeze(0).expand(batch_size, -1)
-            write_weights = F.softmax(-usage_scores, dim=-1) * write_strength
-            
-            # Update memory
-            self.key_memory = self.key_memory + torch.mm(
-                write_weights.T, write_key
-            ) / (self.usage.unsqueeze(1) + 1e-6)
-            
-            self.value_memory = self.value_memory + torch.mm(
-                write_weights.T, write_value
-            ) / (self.usage.unsqueeze(1) + 1e-6)
-            
-            # Update usage
-            self.usage = self.usage + write_weights.mean(dim=0)
-            self.usage = torch.clamp(self.usage, 0, 100)
+            write_weights = F.softmax(-usage_scores, dim=-1) * float(write_strength)
+            slot_weight = write_weights.sum(dim=0, keepdim=True).T
+            # Weighted batch average for each memory slot.  Empty slots retain
+            # their previous values; active slots use an EMA bounded by one.
+            key_update = torch.mm(write_weights.T, write_key) / slot_weight.clamp_min(1e-6)
+            value_update = torch.mm(write_weights.T, write_value) / slot_weight.clamp_min(1e-6)
+            with torch.no_grad():
+                blend = slot_weight.clamp(0.0, 1.0)
+                self.key_memory.lerp_(key_update.detach(), blend)
+                self.value_memory.lerp_(value_update.detach(), blend)
+                self.usage.add_(write_weights.mean(dim=0).detach()).clamp_(0, 100)
             
         return {
             "read_data": read_data,
@@ -654,7 +657,7 @@ class NeuroevolutionAgent:
         
         for _ in range(self.population_size):
             # Tournament selection
-            tournament_size = 3
+            tournament_size = min(3, self.population_size)
             tournament_indices = np.random.choice(
                 self.population_size, tournament_size, replace=False
             )
@@ -673,14 +676,13 @@ class NeuroevolutionAgent:
         self.population = new_population
         
     def _create_offspring(self, parent: nn.Module) -> nn.Module:
-        """Create offspring from parent network"""
-        offspring = type(parent)()
-        
-        # Copy parameters
-        for child_param, parent_param in zip(offspring.parameters(), parent.parameters()):
-            child_param.data.copy_(parent_param.data)
-            
-        return offspring
+        """Create an independent, structurally identical offspring.
+
+        ``nn.Sequential`` cannot be reconstructed with ``type(parent)()``:
+        its layers are constructor arguments.  Deep-copying preserves arbitrary
+        sampled architectures and produces distinct Parameter objects.
+        """
+        return copy.deepcopy(parent)
     
     def _mutate_network(self, network: nn.Module) -> nn.Module:
         """Mutate network parameters"""
@@ -704,8 +706,10 @@ class NeuralArchitectureFactory:
     
     @staticmethod
     def create_transformer_agent(agent_dim: int, num_actions: int) -> MultiAgentTransformer:
-        """Create transformer-based multi-agent"""
-        return MultiAgentTransformer(agent_dim, embed_dim=256, num_heads=8)
+        """Create a transformer-based multi-agent with the requested action head."""
+        return MultiAgentTransformer(
+            agent_dim, embed_dim=256, num_heads=8, num_actions=num_actions
+        )
     
     @staticmethod
     def create_gnn_agent(node_features: int, edge_features: int) -> GraphNeuralNetwork:
